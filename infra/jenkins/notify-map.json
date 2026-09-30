@@ -1,0 +1,20 @@
+{
+  "$comment": "Public example mapping. Replace with deployment-specific identities outside the repository.",
+  "byGitlabUsername": {
+    "user1": "member1",
+    "user2": "member2",
+    "user3": "member3",
+    "user4": "member4",
+    "user5": "member5",
+    "user6": "member6"
+  },
+  "byEmail": {
+    "user1@example.com": "member1",
+    "user2@example.com": "member2",
+    "user3@example.com": "member3",
+    "user4@example.com": "member4",
+    "user5@example.com": "member5",
+    "user6@example.com": "member6"
+  },
+  "mergeRequestBaseUrl": "https://gitlab.example.com/group/project/-/merge_requests/"
+}

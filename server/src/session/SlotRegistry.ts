@@ -1,0 +1,469 @@
+/**
+ * Logical seat accounting across rooms: RESERVED (session issued), JOINED (connected) and
+ * RETIRING (left but remote media not yet confirmed released). A match room holds 6 seats and a
+ * demo room holds 1; service capacity and the number of rooms are computed limits passed in by
+ * the caller (`serviceCapacity` defaults to 60, `roomCapacity` to 6), F-verified at deploy time.
+ * Both limits count the rooms players join (match and showcase): demo rooms have their own
+ * small room budget (ISSUE-312), so a demonstration never takes a room or a seat away. A RETIRING seat still counts; only `releaseConfirmed` (after E confirms retirement)
+ * frees it.
+ */
+import { showcaseSeatRole, type ShowcaseSeat } from '@kkakkung/protocol/game-messages';
+import type { Phase, Role } from '@kkakkung/protocol/game-schema';
+
+export type SlotState = 'RESERVED' | 'JOINED' | 'RETIRING';
+
+/**
+ * How a room was opened. A demo room (ISSUE-258) holds one seat for the operator and its
+ * chosen role; the other five participants are server-driven puppets that never take a seat.
+ */
+export type RoomKind = 'match' | 'demo' | 'showcase';
+
+export type RoomOptions = Readonly<{
+  capacity: number;
+  kind: RoomKind;
+  operatorRole: Role | null;
+}>;
+
+/** 시연 방(showcase)은 실제 사람 넷이 2:2 로 뛴다. 자리(역할별 1·2)는 각자 고르고 한 자리에 하나다. */
+export const SHOWCASE_CAPACITY = 4;
+
+export type ReserveResult =
+  | 'reserved'
+  | 'ROOM_FULL'
+  | 'SEAT_TAKEN'
+  | 'SERVICE_FULL'
+  | 'ROOM_LIMIT'
+  | 'DEMO_LIMIT'
+  | 'OWNER_LIMIT'
+  | 'ROOM_CLOSED';
+
+type RoomEntry = {
+  roomCode: string;
+  phase: Phase;
+  capacity: number;
+  kind: RoomKind;
+  operatorRole: Role | null;
+  /**
+   * `seat` 는 시연 방에서 참가자가 고른 자리(ISSUE-403)이고 `role` 은 그 자리의 역할이다.
+   * 다른 방은 서버가 역할을 배정하므로 둘 다 없다.
+   */
+  slots: Map<string, { state: SlotState; joinOrder: number; role?: Role; seat?: ShowcaseSeat }>;
+  nextJoinOrder: number;
+  createdAtMs: number;
+  lastActivityMs: number;
+  phaseStartedAtMs: number;
+  closing: boolean;
+  joinLocked: boolean;
+  accessRevision: number;
+  /**
+   * 이 방을 연 주체(ISSUE-293). 게스트 생성에만 붙는 불투명한 키이며 팀 입장은 null 이다.
+   * 한 주체가 방 예산 전체를 가져가지 못하게 세는 데만 쓰고 다른 판단에는 쓰지 않는다.
+   */
+  openedBy: string | null;
+};
+
+export const JOINABLE_PHASES: readonly Phase[] = ['LOBBY', 'DEVICE_CHECK'];
+/**
+ * ISSUE-372. LiveKit 이 붙어 있는 단계. 경기 예산(maxRooms)은 이 단계에 있는 일반 방 수로 센다.
+ * 연습을 시작할 때 가져가고, 결과·무효·로비로 넘어가면 따로 돌려주지 않아도 풀린다.
+ */
+export const MATCH_PHASES: readonly Phase[] = [
+  'TEAM_PRACTICE',
+  'MAP_FINALIZING',
+  'GAME_LOADING',
+  'COUNTDOWN',
+  'PLAYING',
+];
+
+/** ISSUE-372. 홈 화면이 보여 주는 여유. 개수만 담고 방 정보는 담지 않는다. */
+export type CapacitySnapshot = Readonly<{
+  matchesInUse: number;
+  matchLimit: number;
+  lobbyRoomsInUse: number;
+  lobbyRoomLimit: number;
+}>;
+
+export class SlotRegistry {
+  private readonly rooms = new Map<string, RoomEntry>();
+  readonly roomCapacity: number;
+  readonly serviceCapacity: number;
+  /**
+   * 동시에 진행할 수 있는 경기(연습~경기) 수. LiveKit 을 쓰는 비싼 예산이다(ISSUE-372 부터
+   * 방을 만드는 예산이 아니라 경기를 시작하는 예산).
+   */
+  readonly maxRooms: number;
+  /** 동시에 열어 둘 수 있는 일반 방(대기방 포함) 수. 방 만들기가 쓴다(ISSUE-372). */
+  readonly maxLobbyRooms: number;
+  /** 한 주체가 동시에 열어 둘 수 있는 방 수(ISSUE-293). */
+  readonly maxRoomsPerOwner: number;
+  /** 한 SSO 계정이 동시에 열어 둘 수 있는 방 수(ISSUE-366). 출처와 따로 센다. */
+  readonly maxRoomsPerAccount: number;
+  /** 동시에 열 수 있는 데모 방 수. maxRooms 와 따로 센다(ISSUE-312). */
+  readonly maxDemoRooms: number;
+  /**
+   * 동시에 쓰고 있을 수 있는 시연 방 수(ISSUE-361). ISSUE-372 부터 일반 방 예산과 따로
+   * 센다: 발표 중에 일반 방이 막히거나, 일반 방이 차서 발표가 막히지 않게 한다.
+   */
+  readonly maxShowcaseRooms: number;
+
+  constructor(options: {
+    roomCapacity?: number;
+    serviceCapacity?: number;
+    maxRooms: number;
+    maxLobbyRooms?: number;
+    maxRoomsPerOwner?: number;
+    maxRoomsPerAccount?: number;
+    maxDemoRooms?: number;
+    maxShowcaseRooms?: number;
+  }) {
+    this.roomCapacity = options.roomCapacity ?? 6;
+    this.serviceCapacity = options.serviceCapacity ?? 60;
+    this.maxRooms = options.maxRooms;
+    this.maxLobbyRooms = options.maxLobbyRooms ?? options.maxRooms;
+    this.maxRoomsPerOwner = options.maxRoomsPerOwner ?? 2;
+    this.maxRoomsPerAccount = options.maxRoomsPerAccount ?? 1;
+    this.maxDemoRooms = options.maxDemoRooms ?? 1;
+    this.maxShowcaseRooms = options.maxShowcaseRooms ?? 1;
+    if (!Number.isSafeInteger(this.maxDemoRooms) || this.maxDemoRooms < 1)
+      throw new Error('INVALID_MAX_DEMO_ROOMS');
+    if (!Number.isSafeInteger(this.maxShowcaseRooms) || this.maxShowcaseRooms < 1)
+      throw new Error('INVALID_MAX_SHOWCASE_ROOMS');
+    if (!Number.isSafeInteger(this.maxRooms) || this.maxRooms < 1)
+      throw new Error('INVALID_MAX_ROOMS');
+    if (!Number.isSafeInteger(this.maxLobbyRooms) || this.maxLobbyRooms < this.maxRooms)
+      throw new Error('INVALID_MAX_LOBBY_ROOMS');
+    if (!Number.isSafeInteger(this.maxRoomsPerOwner) || this.maxRoomsPerOwner < 1)
+      throw new Error('INVALID_MAX_ROOMS_PER_OWNER');
+    if (!Number.isSafeInteger(this.maxRoomsPerAccount) || this.maxRoomsPerAccount < 1)
+      throw new Error('INVALID_MAX_ROOMS_PER_ACCOUNT');
+  }
+
+  roomCodes(): ReadonlySet<string> {
+    return new Set(this.rooms.keys());
+  }
+
+  hasRoom(roomCode: string) {
+    return this.rooms.has(roomCode);
+  }
+
+  phaseOf(roomCode: string): Phase | null {
+    return this.rooms.get(roomCode)?.phase ?? null;
+  }
+
+  access(roomCode: string): { locked: boolean; revision: number } | null {
+    const room = this.rooms.get(roomCode);
+    return room ? { locked: room.joinLocked, revision: room.accessRevision } : null;
+  }
+
+  setJoinLocked(roomCode: string, locked: boolean): boolean {
+    const room = this.rooms.get(roomCode);
+    if (!room || room.closing || !JOINABLE_PHASES.includes(room.phase)) return false;
+    if (room.joinLocked !== locked) room.accessRevision++;
+    room.joinLocked = locked;
+    return true;
+  }
+
+  canJoin(roomCode: string): boolean {
+    const room = this.rooms.get(roomCode);
+    return !!room && !room.closing && !room.joinLocked && JOINABLE_PHASES.includes(room.phase);
+  }
+
+  setPhase(roomCode: string, phase: Phase, nowMs: number) {
+    const room = this.rooms.get(roomCode);
+    if (!room) return;
+    if (room.phase !== phase) room.phaseStartedAtMs = nowMs;
+    room.phase = phase;
+    room.lastActivityMs = nowMs;
+  }
+
+  /** 같은 주체가 지금 열어 두고 있는 방 수(ISSUE-293). */
+  roomsOpenedBy(owner: string): number {
+    let count = 0;
+    for (const room of this.rooms.values()) if (room.openedBy === owner) count++;
+    return count;
+  }
+
+  touch(roomCode: string, nowMs: number) {
+    const room = this.rooms.get(roomCode);
+    if (room) room.lastActivityMs = nowMs;
+  }
+
+  lastActivity(roomCode: string): number | null {
+    return this.rooms.get(roomCode)?.lastActivityMs ?? null;
+  }
+
+  phaseStartedAt(roomCode: string): number | null {
+    return this.rooms.get(roomCode)?.phaseStartedAtMs ?? null;
+  }
+
+  /** Close admission immediately while async socket/media retirement is still pending. */
+  beginClose(roomCode: string): void {
+    const room = this.rooms.get(roomCode);
+    if (room) room.closing = true;
+  }
+
+  totalOccupied(): number {
+    let total = 0;
+    for (const room of this.rooms.values()) total += room.slots.size;
+    return total;
+  }
+
+  /**
+   * Seats that count toward the service capacity: every room players join, match or showcase. A
+   * demo operator's seat is not one of them; demo rooms have their own budget (ISSUE-312).
+   */
+  playerOccupied(): number {
+    let total = 0;
+    for (const room of this.rooms.values()) if (room.kind !== 'demo') total += room.slots.size;
+    return total;
+  }
+
+  private roomsOfKind(kind: RoomKind): number {
+    let count = 0;
+    for (const room of this.rooms.values()) if (room.kind === kind) count += 1;
+    return count;
+  }
+
+  /** 지금 연습~경기 중인 일반 방 수(ISSUE-372). */
+  activeMatchRooms(): number {
+    let count = 0;
+    for (const room of this.rooms.values())
+      if (room.kind === 'match' && MATCH_PHASES.includes(room.phase)) count += 1;
+    return count;
+  }
+
+  /**
+   * 이 방이 연습을 시작해도 되는가. 일반 방만 경기 예산을 쓴다. 이미 경기 중인 방은 제 자리를
+   * 갖고 있으므로 막지 않는다. 시연·데모 방은 각자의 예산이 있다.
+   */
+  canStartMatch(roomCode: string): boolean {
+    const room = this.rooms.get(roomCode);
+    if (!room) return false;
+    if (room.kind !== 'match' || MATCH_PHASES.includes(room.phase)) return true;
+    return this.activeMatchRooms() < this.maxRooms;
+  }
+
+  capacity(): CapacitySnapshot {
+    return {
+      matchesInUse: this.activeMatchRooms(),
+      matchLimit: this.maxRooms,
+      lobbyRoomsInUse: this.roomsOfKind('match'),
+      lobbyRoomLimit: this.maxLobbyRooms,
+    };
+  }
+
+  occupied(roomCode: string): number {
+    return this.rooms.get(roomCode)?.slots.size ?? 0;
+  }
+
+  slotState(roomCode: string, playerId: string): SlotState | null {
+    return this.rooms.get(roomCode)?.slots.get(playerId)?.state ?? null;
+  }
+
+  /** How the room was opened. Null when the room no longer exists. */
+  optionsOf(roomCode: string): RoomOptions | null {
+    const room = this.rooms.get(roomCode);
+    return room
+      ? { capacity: room.capacity, kind: room.kind, operatorRole: room.operatorRole }
+      : null;
+  }
+
+  /** New participants only in LOBBY/DEVICE_CHECK; refills during a match are refused. */
+  reserve(
+    roomCode: string,
+    playerId: string,
+    nowMs: number,
+    options: {
+      create?: boolean;
+      demo?: { operatorRole: Role };
+      /** 시연 방 자리. 방을 새로 열 때는 종류를 정하고, 있는 방에서는 고른 자리가 비었는지 본다. */
+      showcase?: { seat: ShowcaseSeat };
+      openedBy?: string | null;
+      /** 주체가 출처(게스트)인지 SSO 계정인지. 한도가 다르다. 생략하면 출처. */
+      ownerKind?: 'origin' | 'account';
+    } = {},
+  ): ReserveResult {
+    let room = this.rooms.get(roomCode);
+    if (!room) {
+      if (!options.create) return 'ROOM_CLOSED';
+      if (options.demo) {
+        if (this.roomsOfKind('demo') >= this.maxDemoRooms) return 'DEMO_LIMIT';
+      } else if (options.showcase) {
+        if (this.showcaseRoomsInUse() >= this.maxShowcaseRooms) return 'ROOM_LIMIT';
+      } else if (this.roomsOfKind('match') >= this.maxLobbyRooms) return 'ROOM_LIMIT';
+      // 전역 예산을 한 주체가 다 가져가지 못하게 한다. 방이 닫히면 항목이 사라지므로 따로
+      // 정리할 계수기를 두지 않고 매번 센다(방은 최대 열 개다).
+      const ownerLimit =
+        options.ownerKind === 'account' ? this.maxRoomsPerAccount : this.maxRoomsPerOwner;
+      if (options.openedBy && this.roomsOpenedBy(options.openedBy) >= ownerLimit)
+        return 'OWNER_LIMIT';
+      room = {
+        roomCode,
+        phase: 'LOBBY',
+        // A demo room seats only the operator; its five puppets are server-side participants.
+        capacity: options.demo ? 1 : options.showcase ? SHOWCASE_CAPACITY : this.roomCapacity,
+        kind: options.demo ? 'demo' : options.showcase ? 'showcase' : 'match',
+        operatorRole: options.demo?.operatorRole ?? null,
+        slots: new Map(),
+        nextJoinOrder: 0,
+        createdAtMs: nowMs,
+        lastActivityMs: nowMs,
+        phaseStartedAtMs: nowMs,
+        closing: false,
+        joinLocked: false,
+        accessRevision: 0,
+        openedBy: options.openedBy ?? null,
+      };
+      this.rooms.set(roomCode, room);
+    }
+    if (room.closing || room.joinLocked) return 'ROOM_CLOSED';
+    if (room.slots.has(playerId)) return 'reserved';
+    if (!JOINABLE_PHASES.includes(room.phase)) return 'ROOM_CLOSED';
+    if (room.slots.size >= room.capacity) return 'ROOM_FULL';
+    if (room.kind !== 'demo' && this.playerOccupied() >= this.serviceCapacity)
+      return 'SERVICE_FULL';
+    if (room.kind === 'showcase') {
+      // ISSUE-403. 시연 방은 자리를 고르고 들어온다. 누가 먼저 오든 고른 자리를 받고, 이미
+      // 앉은 자리면 다른 자리를 고르게 한다.
+      const seat = options.showcase?.seat;
+      if (!seat) return 'ROOM_CLOSED';
+      for (const slot of room.slots.values()) if (slot.seat === seat) return 'SEAT_TAKEN';
+      room.slots.set(playerId, {
+        state: 'RESERVED',
+        joinOrder: room.nextJoinOrder++,
+        role: showcaseSeatRole(seat),
+        seat,
+      });
+    } else room.slots.set(playerId, { state: 'RESERVED', joinOrder: room.nextJoinOrder++ });
+    room.lastActivityMs = nowMs;
+    return 'reserved';
+  }
+
+  /**
+   * 지금 들어갈 수 있는 시연 방. `/showcase` 를 연 사람은 가장 먼저 열린 방부터 채운다(Map 은 삽입
+   * 순서다). 시연 방이 여럿이어도 무리를 흩지 않는다. 없으면 null.
+   */
+  joinableShowcaseRoom(): string | null {
+    for (const room of this.rooms.values()) {
+      if (room.kind !== 'showcase' || room.closing || room.joinLocked) continue;
+      if (!JOINABLE_PHASES.includes(room.phase)) continue;
+      if (room.slots.size >= room.capacity) continue;
+      return room.roomCode;
+    }
+    return null;
+  }
+
+  /**
+   * 쓰고 있는(모이는 중이거나 경기 중인, 닫히지 않은) 시연 방 수. 찼거나 잠긴 방도 센다. 결과·무효
+   * 화면에 남은 방은 세지 않아 다음 시연이 새 방을 열 수 있다. ISSUE-372 부터 시연 방은 일반
+   * 방 예산 밖이므로, 경기 중인 방도 세야 동시에 쓰는 LiveKit 이 SHOWCASE_ROOMS 판을 넘지 않는다.
+   */
+  showcaseRoomsInUse(): number {
+    let count = 0;
+    for (const room of this.rooms.values())
+      if (
+        room.kind === 'showcase' &&
+        !room.closing &&
+        (JOINABLE_PHASES.includes(room.phase) || MATCH_PHASES.includes(room.phase))
+      )
+        count += 1;
+    return count;
+  }
+
+  /**
+   * ISSUE-361. 들어갈 방이 없을 때 새 시연 방을 열 수 있는가. 쓰고 있는 시연 방이 한도
+   * (maxShowcaseRooms) 미만이면 연다. 한도에 닿았으면 호출 측이 CAPACITY 로 기다리게 한다.
+   */
+  canOpenShowcaseRoom(): boolean {
+    return this.showcaseRoomsInUse() < this.maxShowcaseRooms;
+  }
+
+  /** 시연 방 참가자가 고른 자리의 역할. 방이 역할을 배정할 때 계획으로 넘긴다. */
+  requestedRoles(roomCode: string): Map<string, Role> {
+    const roles = new Map<string, Role>();
+    const room = this.rooms.get(roomCode);
+    if (!room) return roles;
+    for (const [playerId, slot] of room.slots) if (slot.role) roles.set(playerId, slot.role);
+    return roles;
+  }
+
+  /** ISSUE-403. 시연 방 참가자가 고른 자리. 방이 배치 자리 이름을 매길 때 쓴다. */
+  requestedSeats(roomCode: string): Map<string, ShowcaseSeat> {
+    const seats = new Map<string, ShowcaseSeat>();
+    const room = this.rooms.get(roomCode);
+    if (!room) return seats;
+    for (const [playerId, slot] of room.slots) if (slot.seat) seats.set(playerId, slot.seat);
+    return seats;
+  }
+
+  markJoined(roomCode: string, playerId: string, nowMs: number): boolean {
+    const room = this.rooms.get(roomCode);
+    if (room?.closing || room?.joinLocked) return false;
+    const slot = room?.slots.get(playerId);
+    if (!slot || slot.state === 'RETIRING') return false;
+    slot.state = 'JOINED';
+    this.touch(roomCode, nowMs);
+    return true;
+  }
+
+  /** A seat whose media generation is still being retired remotely stays occupied. */
+  markRetiring(roomCode: string, playerId: string) {
+    const slot = this.rooms.get(roomCode)?.slots.get(playerId);
+    if (slot) slot.state = 'RETIRING';
+  }
+
+  /** Frees a seat that never had media or whose retirement was confirmed. */
+  release(
+    roomCode: string,
+    playerId: string,
+    options: { confirmedRetirement?: boolean } = {},
+  ): boolean {
+    const room = this.rooms.get(roomCode);
+    const slot = room?.slots.get(playerId);
+    if (!room || !slot) return false;
+    if (slot.state === 'RETIRING' && !options.confirmedRetirement) return false;
+    room.slots.delete(playerId);
+    return true;
+  }
+
+  joinOrder(roomCode: string, playerId: string): number | null {
+    return this.rooms.get(roomCode)?.slots.get(playerId)?.joinOrder ?? null;
+  }
+
+  members(roomCode: string): {
+    playerId: string;
+    state: SlotState;
+    joinOrder: number;
+    role?: Role;
+    seat?: ShowcaseSeat;
+  }[] {
+    const room = this.rooms.get(roomCode);
+    if (!room) return [];
+    return [...room.slots.entries()]
+      .map(([playerId, slot]) => ({ playerId, ...slot }))
+      .sort((a, b) => a.joinOrder - b.joinOrder);
+  }
+
+  /** Idempotent. Only an empty room disappears; RETIRING seats keep the room alive. */
+  closeRoom(roomCode: string): boolean {
+    const room = this.rooms.get(roomCode);
+    if (!room) return true;
+    if (room.slots.size > 0) return false;
+    this.rooms.delete(roomCode);
+    return true;
+  }
+
+  /** Read-only counts for E's getGameActivity; each seat is counted once. */
+  activity(): { activeMatches: number; activePractices: number; pendingAdmissions: number } {
+    let activeMatches = 0;
+    let activePractices = 0;
+    let pendingAdmissions = 0;
+    for (const room of this.rooms.values()) {
+      if (room.phase === 'TEAM_PRACTICE') activePractices++;
+      else if (['MAP_FINALIZING', 'GAME_LOADING', 'COUNTDOWN', 'PLAYING'].includes(room.phase))
+        activeMatches++;
+      for (const slot of room.slots.values()) if (slot.state === 'RESERVED') pendingAdmissions++;
+    }
+    return { activeMatches, activePractices, pendingAdmissions };
+  }
+}

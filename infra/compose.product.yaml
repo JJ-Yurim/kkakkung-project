@@ -1,0 +1,39 @@
+# Product overlay, appended by the release runner only for a product manifest.
+# Approved evidence is read-only; journal/checkpoint/consumption markers stay on the durable volume.
+services:
+  game-server:
+    environment:
+      SERVER_PROFILE: product
+      MEDIA_MODE: livekit
+      TRUST_PROXY_HOPS: 1
+      # D-2026-09-13-01: product lobby inactivity expires after ten minutes.
+      ROOM_IDLE_TTL_MS: '600000'
+      # ISSUE-251: deployed capacity, six seats per room. Kept equal to the continuous overlay
+      # so the two deployment modes never differ in how much they open.
+      MAX_ROOMS: '10'
+      MAX_SLOTS: '60'
+      # ISSUE-372: MAX_ROOMS/MAX_SLOTS above bound concurrent matches (practice to play, LiveKit).
+      # Lobby rooms are cheap and have their own, larger budget; a room counts against MAX_ROOMS
+      # only while its match runs. Showcase rooms (SHOWCASE_ROOMS) sit outside both.
+      LOBBY_MAX_ROOMS: '30'
+      # ISSUE-353: same demo budget as the continuous overlay (separate from MAX_ROOMS).
+      DEMO_MAX_ROOMS: '3'
+    volumes:
+      - type: bind
+        source: ${OPS_EVIDENCE_DIR:?Set the approved evidence directory}/runtime-evidence.json
+        target: /var/lib/kkakkung/runtime-evidence.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPS_EVIDENCE_DIR:?Set the approved evidence directory}/capability-report.json
+        target: /var/lib/kkakkung/capability-report.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPS_EVIDENCE_DIR:?Set the approved evidence directory}/official-usage-input.json
+        target: /var/lib/kkakkung/official-usage-input.json
+        read_only: true
+        bind:
+          create_host_path: false

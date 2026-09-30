@@ -1,0 +1,49 @@
+# Persistent service policy; appended only for explicitly continuous product releases.
+# Legacy trial files remain on the host for a verified rollback and are not mounted in this mode.
+services:
+  game-server:
+    environment:
+      SERVER_PROFILE: product
+      MEDIA_MODE: livekit
+      TRUST_PROXY_HOPS: 1
+      # D-2026-09-13-01: overrides legacy private env files on every product release.
+      ROOM_IDLE_TTL_MS: '600000'
+      # ISSUE-251: deployed capacity, six seats per room. Raised to the schema ceiling so the
+      # always-available demo room does not compete with a real match for the only room. The staged
+      # Cloud load (1-7) has not run, so ten rooms of real media is still unmeasured.
+      MAX_ROOMS: '10'
+      MAX_SLOTS: '60'
+      # ISSUE-372: MAX_ROOMS/MAX_SLOTS above bound concurrent matches (practice to play, LiveKit).
+      # Lobby rooms are cheap and have their own, larger budget; a room counts against MAX_ROOMS
+      # only while its match runs. Showcase rooms (SHOWCASE_ROOMS) sit outside both.
+      LOBBY_MAX_ROOMS: '30'
+      # ISSUE-300: one origin (an IPv4 address or an IPv6 /64) may hold at most this many
+      # rooms at once, so a single visitor cannot take the whole budget above. Shared NAT folds a
+      # school or office onto one origin; a normal team opens one room and joins by invitation.
+      # ISSUE-366: team SSO creation is capped per SSO account instead
+      # (MAX_ROOMS_PER_ACCOUNT, default 1), so teammates behind one campus IP are not blocked.
+      MAX_ROOMS_PER_ORIGIN: '2'
+      # ISSUE-258: the operator demo room stays available so a demonstration needs no redeploy.
+      # It has no entry point on the home screen: operators open it from /demo behind GitLab SSO.
+      DEMO_ROOMS: '1'
+      # ISSUE-312/353: demo rooms have their own budget, outside MAX_ROOMS/MAX_SLOTS above, and
+      # issue no media, so opening them costs no match room and no LiveKit usage. Three is the schema
+      # ceiling; it lets several operators demonstrate at once.
+      DEMO_MAX_ROOMS: '3'
+      # Requires the loopback-only web proxy and host GitLab auth_request boundary.
+      SERVICE_AUDIENCE: team
+      SESSION_ADMISSION_MODE: gitlab-sso
+      OPS_OPERATING_MODE: continuous
+    volumes:
+      - type: bind
+        source: ${OPS_EVIDENCE_DIR:?Set the service configuration directory}/service-operations.json
+        target: /var/lib/kkakkung/service-operations.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPS_EVIDENCE_DIR:?Set the service configuration directory}/capability-report.json
+        target: /var/lib/kkakkung/capability-report.json
+        read_only: true
+        bind:
+          create_host_path: false

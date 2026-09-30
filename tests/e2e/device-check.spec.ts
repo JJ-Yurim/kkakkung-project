@@ -1,0 +1,87 @@
+import { expect, test, type Page } from '@playwright/test';
+import { seedMediaConsent } from './consent';
+
+// ISSUE-273. 장치 점검 캐러셀. /preview 의 합성 상태만 쓰고 실제 장치·방은 열지 않는다.
+async function openDeviceCheck(page: Page) {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  // 카메라를 켜기 전 동의는 ISSUE-292 가 따로 본다. 여기서는 이미 동의한 기기로 시작한다.
+  await seedMediaConsent(page);
+  await page.goto('/preview');
+  await page.getByRole('button', { name: '장치 점검', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '플레이 전 장치 점검' })).toBeVisible();
+  return errors;
+}
+
+// ISSUE-292. 동의하지 않은 기기는 장치 점검 자체를 볼 수 없다.
+test('asks for media consent before the device check appears', async ({ page }) => {
+  await page.goto('/preview');
+  await page.getByRole('button', { name: '장치 점검', exact: true }).click();
+
+  await expect(page.getByRole('heading', { name: '카메라를 켜기 전에' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '플레이 전 장치 점검' })).toBeHidden();
+  const proceed = page.getByRole('button', { name: '동의합니다' });
+  await expect(proceed).toBeDisabled();
+
+  // 하나만 켜도 통과하지 못한다.
+  await page.getByRole('checkbox', { name: '위 내용을 읽고 동의합니다.' }).check();
+  await expect(proceed).toBeDisabled();
+  await page.getByRole('checkbox', { name: '만 14세 이상입니다.' }).check();
+  await expect(proceed).toBeEnabled();
+
+  await proceed.click();
+  await expect(page.getByRole('heading', { name: '플레이 전 장치 점검' })).toBeVisible();
+
+  // 동의는 기기에 남아 다시 묻지 않는다.
+  await page.reload();
+  await page.getByRole('button', { name: '장치 점검', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '플레이 전 장치 점검' })).toBeVisible();
+});
+
+const stage = (page: Page, name: string) => page.getByTestId('device-stage').selectOption(name);
+const step = (page: Page, name: string) => page.getByRole('heading', { name });
+
+test('walks the device check one step at a time and keeps each error in its own step', async ({
+  page,
+}) => {
+  const errors = await openDeviceCheck(page);
+
+  // 점검 전에는 첫 단계에서 시작한다. 앞 단계는 없다.
+  await expect(step(page, '1 · 카메라')).toBeVisible();
+  await expect(step(page, '2 · 자세')).toBeHidden();
+  await expect(page.getByRole('button', { name: '이전 단계' })).toBeDisabled();
+  // 막힌 단계에 갇히지 않게 앞으로는 직접 넘어갈 수 있고, 진행표시는 상태를 그대로 알린다.
+  await page.getByRole('button', { name: '다음 단계' }).click();
+  await expect(step(page, '2 · 자세')).toBeVisible();
+  await page.getByRole('button', { name: '이전 단계' }).click();
+  await expect(step(page, '1 · 카메라')).toBeVisible();
+
+  // 카메라가 통과하면 자세 단계로 넘어가고 동작 확인 두 줄이 보인다.
+  await stage(page, '카메라 통과');
+  await expect(step(page, '2 · 자세')).toBeVisible();
+  await expect(step(page, '1 · 카메라')).toBeHidden();
+  const motion = page.getByRole('list', { name: '동작 확인' });
+  await expect(motion).toContainText('앞으로 기울이기');
+  await expect(motion).toContainText('고개 돌리기');
+
+  // 지나온 단계로는 돌아갈 수 있고, 다시 진행 중인 단계로 나올 수 있다.
+  await page.getByRole('button', { name: '이전 단계' }).click();
+  await expect(step(page, '1 · 카메라')).toBeVisible();
+  await page.getByRole('button', { name: '다음 단계' }).click();
+  await expect(step(page, '2 · 자세')).toBeVisible();
+
+  // 보정 오류는 그 오류를 낸 자세 단계 안에서만 보인다.
+  await stage(page, '보정 실패');
+  await expect(step(page, '2 · 자세')).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('얼굴을 찾지 못했습니다');
+  await page.getByRole('button', { name: '이전 단계' }).click();
+  await expect(step(page, '1 · 카메라')).toBeVisible();
+  await expect(page.getByRole('alert')).toBeHidden();
+
+  // 전부 통과하면 마지막 단계에서만 준비 완료를 누를 수 있다.
+  await stage(page, '소리 통과');
+  await expect(step(page, '4 · 완료')).toBeVisible();
+  await expect(page.getByRole('button', { name: '준비 완료' })).toBeEnabled();
+
+  expect(errors).toEqual([]);
+});

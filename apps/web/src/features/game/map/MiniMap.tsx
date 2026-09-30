@@ -1,0 +1,156 @@
+import { useEffect, useRef } from 'react';
+import type { Cell, PrivateView } from '@kkakkung/protocol/game-schema';
+import { mapDrawModel } from './map-draw-model';
+import { pastEventMarkers, type HunterMarker } from './past-event-markers';
+import { exitOwnerLabel, type OwnerNames } from '../scene/ExitOwnerLabel';
+import { drawMinimap, minimapDrawKey } from './minimap-render';
+import { minimapZoomAt } from './minimap-zoom';
+
+export function MiniMap({
+  view,
+  ownerNames = {},
+  markers = [],
+  tick = 0,
+  windowCells,
+  cells,
+  renderTick,
+  operatorExit = null,
+  zoomedOut = false,
+}: {
+  view: PrivateView | null;
+  ownerNames?: OwnerNames;
+  markers?: readonly HunterMarker[];
+  tick?: number;
+  /** ISSUE-295. 홀수 칸 수를 주면 내 주변만 확대한 창으로 그린다(경기·혼자 연습 화면). */
+  windowCells?: number;
+  /** ISSUE-398. 전체 지도 한 변(방 맵 격자). 없으면 32칸이다. */
+  cells?: number;
+  /** 주면 창 모드에서 매 프레임 이 값으로 다시 그려 내 위치가 선형으로 흐른다. */
+  renderTick?: () => number | null;
+  /** Only the operator demo supplies this; player rooms must leave it absent. */
+  operatorExit?: Cell | null;
+  /** ISSUE-352. 참이면 같은 위젯 안에서 전체 지도로 줌아웃한다(M 키). 창 모드에서만 쓴다. */
+  zoomedOut?: boolean;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const latest = useRef({ view, markers, tick, renderTick, operatorExit });
+  latest.current = { view, markers, tick, renderTick, operatorExit };
+  // ISSUE-352. 축척은 효과를 다시 걸지 않고 프레임마다 읽는다. 전환 도중에 다시 누르면
+  // 지금 위치에서 반대로 돌아가도록, 바뀐 순간의 값과 시각을 함께 들고 있는다.
+  const target = zoomedOut ? 1 : 0;
+  const zoom = useRef({ from: 0, to: target, since: 0, value: 0 });
+  if (zoom.current.to !== target) {
+    zoom.current = {
+      from: zoom.current.value,
+      to: target,
+      since: typeof performance === 'undefined' ? 0 : performance.now(),
+      value: zoom.current.value,
+    };
+  }
+  const continuous = windowCells !== undefined && renderTick !== undefined;
+  useEffect(
+    () => {
+      const canvas = ref.current;
+      if (!canvas) return;
+      // ISSUE-327. 마지막으로 그린 그림의 열쇠. 창 모드는 프레임마다, 전체 지도는 서버
+      // 패치마다 불려 오는데 그중 대부분은 같은 그림이다. 서 있으면 보간된 내 위치까지 그대로다.
+      let drawn: string | null = null;
+      const draw = () => {
+        const { view, markers, tick, renderTick, operatorExit } = latest.current;
+        // ISSUE-277. 칸이 정수 픽셀에 앉도록 배율도 정수로 고른다.
+        const dpr = Math.max(1, Math.min(Math.floor(window.devicePixelRatio || 1), 2));
+        const size = (canvas.clientWidth || 240) * dpr;
+        const now = typeof performance === 'undefined' ? 0 : performance.now();
+        zoom.current.value = minimapZoomAt(
+          zoom.current.from,
+          zoom.current.to,
+          now - zoom.current.since,
+        );
+        const input = {
+          view,
+          size,
+          tick: renderTick?.() ?? tick,
+          markers,
+          operatorExit,
+          ...(cells === undefined ? {} : { cells }),
+          ...(windowCells === undefined ? {} : { window: windowCells, zoom: zoom.current.value }),
+        };
+        const key = minimapDrawKey(input);
+        // 크기가 달라졌으면 백버퍼를 다시 잡아야 하므로 열쇠와 무관하게 그린다.
+        const resized = canvas.width !== size;
+        if (!resized && key === drawn) return;
+        drawn = key;
+        if (resized) {
+          canvas.width = size;
+          canvas.height = size;
+        }
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        // 전체 지도는 도트가 살도록, 창 모드는 부채꼴·선이 매끈하도록.
+        ctx.imageSmoothingEnabled = windowCells !== undefined;
+        // `drawMinimap` 은 배경부터 다시 칠하므로 백버퍼를 비우지 않아도 잔상이 남지 않는다.
+        drawMinimap(ctx, input);
+      };
+      draw();
+      const observer = new ResizeObserver(() => draw());
+      observer.observe(canvas);
+      let frame = 0;
+      if (continuous && typeof requestAnimationFrame === 'function') {
+        const loop = () => {
+          draw();
+          frame = requestAnimationFrame(loop);
+        };
+        frame = requestAnimationFrame(loop);
+      }
+      return () => {
+        observer.disconnect();
+        if (frame) cancelAnimationFrame(frame);
+      };
+      // 연속 모드는 프레임마다 latest 를 읽으므로 뷰·틱이 바뀔 때 다시 구독하지 않는다.
+    },
+    continuous
+      ? [windowCells, continuous, cells]
+      : [view, markers, tick, windowCells, continuous, operatorExit, cells],
+  );
+  return (
+    <figure
+      className={
+        windowCells === undefined
+          ? 'mini-map'
+          : `mini-map mini-map-window${zoomedOut ? ' mini-map-zoomed-out' : ''}`
+      }
+    >
+      <canvas
+        ref={ref}
+        aria-label={
+          windowCells === undefined
+            ? `내가 탐색한 지도. 위쪽은 북쪽입니다. 채운 칸은 가 본 바닥, 두꺼운 띠는 벽, 옅은 격자는 아직 안 가 본 곳입니다.${operatorExit ? ' O 표시는 운영자 출구입니다.' : ''}`
+            : zoomedOut
+              ? `내가 탐색한 지도 전체. 흰 점이 나이고 위쪽이 북쪽입니다. M 키로 내 주변 ${windowCells}칸 지도로 돌아갑니다.${operatorExit ? ' O 표시는 운영자 출구입니다.' : ''}`
+              : `내 주변 ${windowCells}칸 지도. 가운데 흰 점이 나, 점에서 퍼지는 부채꼴이 내가 보는 방향이고 위쪽이 북쪽입니다. M 키로 전체 지도를 봅니다.${operatorExit ? ' O 표시는 운영자 출구입니다.' : ''}`
+        }
+      />
+      <figcaption>
+        {windowCells === undefined
+          ? '탐색 지도 · 북쪽 고정 · 옅은 격자는 안 가 본 곳'
+          : zoomedOut
+            ? '전체 지도 · 북쪽 고정 · M = 내 주변'
+            : '내 주변 · 흰 점 = 나 · 부채꼴 = 시선 · M = 전체 지도'}
+        {operatorExit && <span className="mini-map-operator-exit"> · O 운영자 출구</span>}
+      </figcaption>
+      {pastEventMarkers(view, markers, tick).length > 0 && (
+        <p>▲ 덫 · ■ 감지기 · ○ 교환: 과거 사건 위치입니다.</p>
+      )}
+      {mapDrawModel(view, tick)?.exits.map((exit, index) => (
+        <div key={exit.exitId}>
+          {index + 1}.{' '}
+          {exitOwnerLabel(
+            exit.ownerId,
+            view?.spectating?.targetId ?? view?.self?.playerId,
+            ownerNames,
+          )}
+        </div>
+      ))}
+    </figure>
+  );
+}

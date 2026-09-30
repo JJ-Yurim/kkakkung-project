@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>오픈소스 고지 · 까꿍</title>
+    <link rel="stylesheet" href="/licenses/notices.css" />
+  </head>
+  <body>
+    <main>
+      <a href="/">까꿍으로 돌아가기</a>
+      <h1>오픈소스 고지</h1>
+      <p>
+        까꿍의 얼굴·자세·손동작 인식에는 Google의 MediaPipe 비전 자산을, 화면 글꼴에는 갈무리 픽셀
+        글꼴을, 경기 배경음에는 Philippe Groarke의 Dark ambiance를 사용합니다.
+      </p>
+      <p>이 페이지는 이 자산들의 출처와 확인한 라이선스를 안내합니다. 확인일: 2026-09-18.</p>
+      <section aria-labelledby="verified">
+        <h2 id="verified">확인한 라이선스</h2>
+        <ul>
+          <li>MediaPipe Tasks Vision SDK 1.0.1: 패키지에 명시된 Apache-2.0.</li>
+          <li>
+            FaceLandmarker float16 release 1: BlazeFace, Face Mesh V2, Blendshape V2 모델 카드의
+            Apache-2.0.
+          </li>
+          <li>PoseLandmarker Lite float16 release 1: BlazePose GHUM 3D 모델 카드의 Apache-2.0.</li>
+          <li>
+            GestureRecognizer의 손 검출·랜드마크 구성 모델: Hand Tracking 모델 카드의 Apache-2.0.
+          </li>
+        </ul>
+        <p><a href="/licenses/Apache-2.0.txt">Apache License 2.0 원문</a></p>
+        <p>
+          공급한 모델과 WASM·로더 파일은 고정한 원본 파일 그대로입니다. 파일별 해시와 구성 모델의
+          공식 근거는 <a href="/models/manifest.json">자산 목록</a>에서 확인할 수 있습니다.
+        </p>
+      </section>
+      <section aria-labelledby="fonts">
+        <h2 id="fonts">글꼴</h2>
+        <p>Copyright (c) 2019–2025 Lee Minseo (quiple@quiple.dev)</p>
+        <p>
+          갈무리 글꼴(Galmuri9, Galmuri11, Galmuri11 Bold, Galmuri14) 2.40.3을 SIL Open Font License
+          1.1에 따라 원본 그대로 함께 배포합니다. 예약 폰트 이름은 <code>Galmuri</code>이며 파일을
+          수정하거나 이름을 바꾸지 않았습니다.
+        </p>
+        <p>
+          나눔명조(Nanum Myeongjo, 한글·라틴 400 서브셋)는 제목 글꼴로 쓰며, 같은 SIL Open Font
+          License 1.1에 따라 원본 그대로 함께 배포합니다. 배포본은
+          <code>@fontsource/nanum-myeongjo</code> 5.2.5이고 그 라이선스 파일은 저작권자를
+          <code>Google Inc.</code>로 적습니다. 예약 폰트 이름은 <code>Nanum</code>입니다.
+        </p>
+        <p>
+          <a href="/fonts/OFL-1.1.txt">SIL Open Font License 1.1 원문</a> ·
+          <a href="https://galmuri.quiple.dev">갈무리 공식 사이트</a>
+        </p>
+      </section>
+      <section aria-labelledby="music">
+        <h2 id="music">배경음</h2>
+        <p>
+          경기 배경음: “Dark ambiance” by Philippe Groarke (Socapex),
+          <a href="https://opengameart.org/content/dark-ambiance">OpenGameArt</a>. 라이선스
+          <a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA 3.0</a>. 확인일:
+          2026-09-27.
+        </p>
+        <p>
+          원본에서 앞 36초를 잘라냈습니다. 잘라낸 파일(<code>/audio/bgm/match.mp3</code>)도 같은 CC
+          BY-SA 3.0으로 배포합니다.
+        </p>
+      </section>
+      <section aria-labelledby="own">
+        <h2 id="own">직접 만든 자산</h2>
+        <p>
+          미로의 벽·바닥 질감, 캐릭터와 장비 형상, 효과음과 안내음, 로고는 이 프로젝트가 직접
+          만들었습니다. 외부에서 받은 그림·모델·음원 파일은 위에 적은 것 외에 없습니다.
+        </p>
+      </section>
+      <section aria-labelledby="pending">
+        <h2 id="pending">추가 확인 중인 항목</h2>
+        <p>
+          GestureRecognizer의 gesture embedder·canned gesture classifier는 공식 분류 모델 카드에
+          라이선스 항목이 없어 재배포 조건 확인이 남아 있습니다. SDK의 라이선스를 해당 모델의 권리로
+          대신하지 않습니다.
+        </p>
+        <p>
+          SDK에 포함된 제3자 구성 요소의 고지도 추가 확인 중입니다. 이 페이지는 서비스 전체의 권리
+          검토 완료를 뜻하지 않습니다.
+        </p>
+      </section>
+      <footer>
+        모델: Google MediaPipe ·
+        <a href="https://github.com/google-ai-edge/mediapipe">공식 저장소</a>
+      </footer>
+    </main>
+  </body>
+</html>

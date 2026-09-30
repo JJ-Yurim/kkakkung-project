@@ -1,0 +1,808 @@
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { Server, ServerError, type Client } from '@colyseus/core';
+import { WebSocketTransport } from '@colyseus/ws-transport';
+import express, { type ErrorRequestHandler, type Request, type Response } from 'express';
+import cors from 'cors';
+import { pino } from 'pino';
+import { devSessionRequestSchema, joinOptionsSchema } from '@kkakkung/protocol/messages';
+import {
+  MEDIA_ROUTES,
+  mediaGrantRequestSchema,
+  mediaStatusReportSchema,
+} from '@kkakkung/protocol/game-messages';
+import type { Cell, MapSize } from '@kkakkung/protocol/game-schema';
+import {
+  PROTOCOL_VERSION,
+  PRODUCT_PROTOCOL_VERSION,
+  PRODUCT_ROOM_NAME,
+  ROOM_NAME,
+} from '@kkakkung/protocol/version';
+import { monitor } from '@colyseus/monitor';
+import { playground } from '@colyseus/playground';
+import type { AppConfig } from './config/env.js';
+import { LayoutLoader } from './game/LayoutLoader.js';
+import { createServerEpoch } from './game/MatchContext.js';
+import { RoomTickCoordinator } from './game/RoomTickCoordinator.js';
+import { answerWebhook } from './media/webhook-answer.js';
+import type {
+  CorePort,
+  CreateOperatorAuth,
+  EmitMetric,
+  LayoutSelectionPort,
+  MapPreparationPort,
+  MatchTuning,
+  MediaConfiguration,
+  MediaCoordinatorDeps,
+  ProductMediaRuntime,
+  PracticeLayoutPort,
+} from './game/ports.js';
+import { createGameRoom } from './rooms/GameRoom.js';
+import { DevKkakkungRoom } from './rooms/DevKkakkungRoom.js';
+import type { DemoExit } from './rooms/DemoScenarios.js';
+import { createKkakkungRoom } from './rooms/KkakkungRoom.js';
+import { RoomDirectory } from './rooms/RoomDirectory.js';
+import { AdmissionLimiter } from './session/AdmissionLimiter.js';
+import { checkOrigin, installHttpBoundary } from './session/HttpBoundary.js';
+import { InviteStore } from './session/InviteStore.js';
+import { RoomInvitations } from './session/RoomInvitations.js';
+import {
+  createDemoAdminRoutes,
+  createDemoAdminUnavailableRoutes,
+  createDemoRoutes,
+  createDemoUnavailableRoutes,
+} from './session/DemoRoutes.js';
+import { createShowcaseRoutes, createShowcaseUnavailableRoutes } from './session/ShowcaseRoutes.js';
+import { fileOperatorAllowlist } from './session/operator-allowlist.js';
+import { createInvitationRoutes } from './session/InvitationRoutes.js';
+import { createOperationsRoutes } from './session/OperationsRoutes.js';
+import { OPERATIONS_ROUTES } from './session/OperationsRoutes.js';
+import { createHealthHandlers } from './health/HealthHandlers.js';
+import { createMetricRegistry, createProcessSampler } from './observability/MetricRegistry.js';
+import { createLogOptions, createStructuredEventLogger } from './observability/StructuredEvents.js';
+import { createAlertNotifier, createWebhookSender } from './observability/AlertNotifier.js';
+import { createAlertPolicy } from './observability/AlertPolicy.js';
+import { ProductSessionStore } from './session/ProductSessionStore.js';
+import { ProductHttpLimiter } from './session/ProductHttpLimiter.js';
+import { createReservationCleanup } from './session/ReservationCleanup.js';
+import { RoomExpiry } from './session/RoomExpiry.js';
+import { clientOrigin, createSessionRoutes, type AdmissionState } from './session/SessionRoutes.js';
+import { SessionStore } from './session/SessionStore.js';
+import { SHOWCASE_CAPACITY, SlotRegistry } from './session/SlotRegistry.js';
+import { createCapacityRoutes } from './session/CapacityRoutes.js';
+import { readFile } from 'node:fs/promises';
+
+/**
+ * Product profile assembled by B from producer exports. Every field is explicit: F's validated
+ * configuration values, A's core/map ports, E's media and operator-auth factories. Missing
+ * producers keep the matching capability disabled and reported, never faked.
+ */
+export type ProductProfile<State = unknown> = Readonly<{
+  /** Real product entrypoint: no development endpoints or admission override. */
+  strictProduct?: boolean;
+  serverEpoch?: string;
+  monotonicNow?: () => number;
+  epochNow?: () => number;
+  random?: () => number;
+  maxRooms: number;
+  /** 동시에 열어 둘 수 있는 일반 방 수(ISSUE-372). 생략하면 maxRooms 와 같다. */
+  lobbyMaxRooms?: number;
+  /** 한 출처가 동시에 열어 둘 수 있는 방 수(ISSUE-300). 생략하면 레지스트리 기본값. */
+  maxRoomsPerOrigin?: number;
+  /** 한 SSO 계정이 동시에 열어 둘 수 있는 방 수(ISSUE-366). 생략하면 레지스트리 기본값. */
+  maxRoomsPerAccount?: number;
+  /** ISSUE-312. Demo rooms counted apart from maxRooms. */
+  demoMaxRooms?: number;
+  inviteMaxTtlMs: number | null;
+  publicWindow:
+    | Readonly<{ opensAtEpochMs: number; closesAtEpochMs: number }>
+    | Readonly<{ mode: 'continuous' }>
+    | null;
+  sessionAttempts: Readonly<{ windowMs: number; perInvite: number; perIp: number }> | null;
+  roomIdleTtlMs: number | null;
+  trustProxy: boolean;
+  opsToken: string | null;
+  createOperatorAuth: CreateOperatorAuth | null;
+  createMediaCoordinator: ((deps: MediaCoordinatorDeps) => ProductMediaRuntime) | null;
+  mediaConfig: Omit<MediaConfiguration, 'productSecurityReady'> | null;
+  core: CorePort<State> | null;
+  tuning: MatchTuning | null;
+  practice: { port: PracticeLayoutPort; raw: unknown } | null;
+  /** ISSUE-259. Reads a match's active exits for demo scenarios; absent disables them. */
+  demoExits?: (state: State) => readonly DemoExit[];
+  /** Start cells of a match, so a demo scenario never tries to install where the rules refuse. */
+  demoStartCells?: (state: State) => readonly Cell[];
+  /** kkakkung. 두 참가자에게 아직 나눌 지식이 남았는지. 교환 대본이 상대를 고를 때 쓴다. */
+  demoExchangeGain?: (state: State, from: string, to: string) => boolean;
+  layouts: {
+    maps: MapPreparationPort;
+    selection: LayoutSelectionPort;
+    /**
+     * ISSUE-383. The tuning file's online selection budget. Absent keeps the loader's
+     * built-in LAYOUT_BUDGET (the same numbers the shipped tuning carries).
+     */
+    budget?: Readonly<{ maxAttempts: number; onlineMapBudgetMs: number; attemptsPerBatch: number }>;
+    masterPath: string;
+    fallbackPath: string;
+    templateId: string;
+    templateVersion: string;
+    /** ISSUE-321. 로비에서 고른 크기별 템플릿. 없는 크기는 위 기본값으로 간다. */
+    bySize?: Partial<
+      Record<
+        MapSize,
+        { masterPath: string; fallbackPath: string; templateId: string; templateVersion: string }
+      >
+    >;
+  } | null;
+  emitMetric?: EmitMetric;
+  /** Releases product configuration watchers/resources after coordinator shutdown. */
+  closeResources?: () => Promise<void>;
+  assetVersion?: string;
+  /**
+   * Development/test only (parseConfig already forbids production): admission source when no
+   * media coordinator exists. Never read from the environment and never exposed over HTTP.
+   */
+  developmentAdmission?: () => AdmissionState;
+}>;
+
+export function createApplication<State = unknown>(
+  config: AppConfig,
+  product?: ProductProfile<State>,
+) {
+  const sessions = new SessionStore();
+  const logger = pino(createLogOptions({ level: config.logLevel, service: config.namespace }));
+  let ready = false;
+  const allowedOrigin = (origin: string | null | undefined) =>
+    checkOrigin(origin === null ? undefined : origin, config.allowedOrigins) !== 'rejected';
+  const transport = new WebSocketTransport({
+    maxPayload: 8192,
+    beforeUpgrade(request) {
+      if (!allowedOrigin(request.headers.get('origin'))) return new Response(null, { status: 403 });
+    },
+  });
+
+  const monotonicNow = product?.monotonicNow ?? (() => performance.now());
+  const metrics = createMetricRegistry({ now: monotonicNow });
+  const eventLogger = createStructuredEventLogger(logger);
+  // ISSUE-288: critical transitions also leave the host when a webhook is configured.
+  const notifier = config.alertWebhook
+    ? createAlertNotifier({
+        now: monotonicNow,
+        service: config.namespace,
+        send: createWebhookSender(config.alertWebhook),
+        onFailure: (alert, code) =>
+          eventLogger.emit({
+            event: 'alert.notify.failed',
+            level: 'warn',
+            atMs: monotonicNow(),
+            fields: { alert, code },
+          }),
+      })
+    : null;
+  const alerts = createAlertPolicy({
+    now: monotonicNow,
+    onEvent: (event) => {
+      eventLogger.emit(event);
+      notifier?.observe(event);
+    },
+    mediaApiTotalLimit: product?.mediaConfig?.maxTotalApiCallsPer60s,
+  });
+  const histogram = monitorEventLoopDelay({ resolution: 20 });
+  const emitMetric: EmitMetric = (sample) => {
+    metrics.emitMetric(sample);
+    product?.emitMetric?.(sample);
+  };
+  const sampleProcess = createProcessSampler({
+    emit: emitMetric,
+    now: monotonicNow,
+    eventLoopDelay: histogram,
+  });
+  const epochNow = product?.epochNow ?? (() => Date.now());
+  const serverEpoch = product?.serverEpoch ?? createServerEpoch();
+  const productSessions = new ProductSessionStore({ now: epochNow });
+  const slots = product
+    ? new SlotRegistry({
+        maxRooms: product.maxRooms,
+        // 설정 단계(env.ts)가 대기방 한도가 경기 한도보다 작지 않은지 이미 본다. 시험처럼 경기 한도만
+        // 바꾼 구성은 대기방 한도를 그만큼으로 본다.
+        maxLobbyRooms: Math.max(product.lobbyMaxRooms ?? product.maxRooms, product.maxRooms),
+        // ISSUE-372. 좌석 한도는 대기방 전부와 시연 방이 찼을 때다. 경기 좌석(LiveKit)은 경기
+        // 예산과 미디어 참가자 한도가 따로 묶는다.
+        serviceCapacity:
+          Math.max(product.lobbyMaxRooms ?? product.maxRooms, product.maxRooms) * 6 +
+          Math.max(config.showcaseRooms, 0) * SHOWCASE_CAPACITY,
+        ...(product.maxRoomsPerOrigin === undefined
+          ? {}
+          : { maxRoomsPerOwner: product.maxRoomsPerOrigin }),
+        ...(product.maxRoomsPerAccount === undefined
+          ? {}
+          : { maxRoomsPerAccount: product.maxRoomsPerAccount }),
+        ...(product.demoMaxRooms === undefined ? {} : { maxDemoRooms: product.demoMaxRooms }),
+        // ISSUE-361. 0 은 라우트가 아예 열리지 않으니 등록부 한도로는 1 을 둔다.
+        ...(config.showcaseRooms > 0 ? { maxShowcaseRooms: config.showcaseRooms } : {}),
+      })
+    : null;
+  const directory = new RoomDirectory();
+  const coordinator = new RoomTickCoordinator({
+    now: monotonicNow,
+    emitMetric,
+    onTickError: (id, error) => logger.error({ roomRef: id, err: error }, 'Room tick threw'),
+  });
+  let media: ProductMediaRuntime | null = null;
+  const admission = (): AdmissionState => {
+    if (media) return media.getOperations().getStatus().admission;
+    return product?.strictProduct ? 'LOCKED' : (product?.developmentAdmission?.() ?? 'LOCKED');
+  };
+  // Without E's coordinator, readiness is unknown and stays LOCKED unless the explicit
+  // development admission hook is present (development/test profile only).
+  const readinessState = (): 'READY' | 'RECOVERING' | 'LOCKED' =>
+    media
+      ? media.getReadiness().state
+      : !product?.strictProduct && product?.developmentAdmission
+        ? 'READY'
+        : 'LOCKED';
+  const operationsReady = () =>
+    readinessState() === 'READY' &&
+    admission() === 'OPEN' &&
+    (!product?.strictProduct || media?.canIssue?.() === true);
+  // ISSUE-258. An operator demo room issues, publishes and receives no media at all, so media
+  // readiness says nothing about whether it can run and would keep it shut wherever media is
+  // disabled. Where a media coordinator runs, its drain still closes it: the room holds a seat from
+  // the same budget, and letting one open while the service is being replaced is exactly what
+  // draining is for. Without one there is no drain, and the room is simply available.
+  const demoOperationsReady = () => !media || admission() === 'OPEN';
+  const productSecurityReady = Boolean(
+    product &&
+    product.opsToken &&
+    product.createOperatorAuth &&
+    product.sessionAttempts &&
+    product.inviteMaxTtlMs !== null &&
+    config.allowedOrigins.length > 0,
+  );
+  const invites =
+    product && slots
+      ? new InviteStore({
+          now: epochNow,
+          maxTtlMs: product.inviteMaxTtlMs,
+          publicWindow: product.publicWindow,
+          knownRoomCodes: () => slots.roomCodes(),
+          operationsReady,
+        })
+      : null;
+  const limiter = product?.sessionAttempts ? new AdmissionLimiter(product.sessionAttempts) : null;
+  const roomInvitations =
+    product && invites && slots
+      ? new RoomInvitations({
+          invites,
+          sessions: productSessions,
+          slots,
+          now: epochNow,
+          maxTtlMs: product.inviteMaxTtlMs,
+        })
+      : null;
+  // Outer gate includes failed JSON and matchmaking requests. Four attempts per configured
+  // session IP allowance leave room for access checks, joins and canceled reservations.
+  const entryLimiter = limiter
+    ? new AdmissionLimiter({
+        ...limiter.options,
+        perInvite: Math.min(Number.MAX_SAFE_INTEGER, limiter.options.perIp * 4),
+      })
+    : null;
+  const cleanupReservations = slots
+    ? createReservationCleanup({
+        sessions: productSessions,
+        slots,
+        hasLiveRoom: (roomCode) => directory.get(roomCode) !== null,
+        onRoomClosed: (roomCode) => {
+          roomInvitations?.revoke(roomCode);
+          invites?.forgetRoom(roomCode);
+        },
+      })
+    : () => {};
+  const roomExpiry = new RoomExpiry(product?.roomIdleTtlMs ?? null);
+  const authorize =
+    product?.opsToken && product.createOperatorAuth
+      ? product.createOperatorAuth(product.opsToken)
+      : null;
+
+  if (product?.createMediaCoordinator && product.mediaConfig) {
+    media = product.createMediaCoordinator({
+      config: { ...product.mediaConfig, productSecurityReady },
+      emitEvent: eventLogger.emit,
+      emitMetric,
+      enqueueControl: (control) => {
+        const matchId = control.type === 'MEDIA_FAILED' ? control.matchId : control.result.matchId;
+        directory.byMatch(matchId)?.enqueueMediaControl(control);
+      },
+      enqueueBindings: (playerId, message) =>
+        directory.byMatch(message.matchId)?.deliverBindings(playerId, message),
+      enqueueAudioPolicy: (playerId, message) =>
+        directory.byMatch(message.matchId)?.deliverAudioPolicy(playerId, message),
+      monotonicNow,
+      epochNowSeconds: () => epochNow() / 1000,
+      getGameActivity: () =>
+        slots?.activity() ?? { activeMatches: 0, activePractices: 0, pendingAdmissions: 0 },
+    });
+  }
+
+  const bearer = (req: Request) => {
+    const header = req.headers.authorization;
+    return typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
+  };
+  const httpLimiter = product
+    ? new ProductHttpLimiter({
+        now: monotonicNow,
+        clientIp: (request) => clientOrigin(request, product.trustProxy),
+        authorize: (header) => authorize?.(header) === true,
+        sessionId: (token) => productSessions.authenticate(token)?.sessionId ?? null,
+      })
+    : null;
+  const protect = (handler: express.RequestHandler) => httpLimiter?.wrap(handler) ?? handler;
+
+  const server = new Server({
+    transport,
+    greet: false,
+    gracefullyShutdown: false,
+    express(app) {
+      app.disable('x-powered-by');
+      app.use((request, response, next) => {
+        if (!allowedOrigin(request.headers.origin)) {
+          response.status(403).json({ error: 'ORIGIN_NOT_ALLOWED' });
+          return;
+        }
+        next();
+      });
+      app.use(cors({ origin: config.allowedOrigins }));
+      // Raw body for provider signature verification; registered before the JSON parser.
+      app.post(
+        MEDIA_ROUTES.webhook,
+        express.text({ type: '*/*', limit: '256kb' }),
+        async (req, res) => {
+          if (!media) return void res.status(503).json({ error: 'MEDIA_UNAVAILABLE' });
+          const raw = typeof req.body === 'string' ? req.body : '';
+          const answer = await answerWebhook(() =>
+            media.handleWebhook(raw, String(req.headers.authorization ?? '')),
+          );
+          res.status(answer.status).json(answer.body);
+        },
+      );
+      app.use(express.json({ limit: '2kb' }));
+      if (product?.trustProxy) app.set('trust proxy', 1);
+      const mediaHealth = media?.isInitialized
+        ? createHealthHandlers({
+            getReadiness: () => media!.getReadiness(),
+            isInitialized: media.isInitialized,
+          })
+        : null;
+      app.get('/health/live', mediaHealth?.live ?? ((_req, res) => res.json({ status: 'alive' })));
+      app.get('/health', (_req, res) =>
+        res.json({ ok: true, stage: product ? 'product-assembly' : 'skeleton' }),
+      );
+      // This bootstrap is restricted to development/test by parseConfig.
+      if (!product?.strictProduct) {
+        app.use('/monitor', monitor());
+        app.use('/playground', playground());
+      }
+      if (mediaHealth) app.get('/health/ready', mediaHealth.ready);
+      app.get('/health/ready', (_req, res) => {
+        const readiness = readinessState();
+        const healthy = ready && (!product || readiness === 'READY');
+        res.status(healthy ? 200 : 503).json({
+          status: healthy ? 'ready' : ready ? 'recovering' : 'starting',
+          stage: product ? 'product-assembly' : 'skeleton',
+          mvpReady: false,
+          mediaEnabled: media !== null,
+          readiness: product ? readiness : undefined,
+          admission: product ? admission() : undefined,
+          productSecurityReady,
+        });
+      });
+      app.get('/api/config', (_req, res) =>
+        res.json({
+          stage: product ? 'product-assembly' : 'skeleton',
+          protocolVersion: product ? PRODUCT_PROTOCOL_VERSION : PROTOCOL_VERSION,
+          roomName: PRODUCT_ROOM_NAME,
+          diagnosticRoomName: ROOM_NAME,
+          mediaEnabled: media !== null,
+          maxPlayers: 6,
+        }),
+      );
+      app.post('/api/dev-sessions', (req, res) => {
+        if (product?.strictProduct) return void res.sendStatus(404);
+        res.setHeader('Cache-Control', 'no-store');
+        const result = devSessionRequestSchema.safeParse(req.body);
+        if (!result.success) {
+          res.status(400).json({ error: 'INVALID_NICKNAME' });
+          return;
+        }
+        try {
+          res.status(201).json(sessions.issue(result.data.nickname));
+        } catch {
+          res.status(429).json({ error: 'SESSION_CAPACITY' });
+        }
+      });
+      if (product && slots && invites) {
+        app.use(
+          createSessionRoutes({
+            invites,
+            sessions: productSessions,
+            slots,
+            limiter,
+            admission,
+            monotonicNow,
+            trustProxy: product.trustProxy,
+            admissionMode: config.sessionAdmissionMode,
+            cleanupReservations,
+            ...(roomInvitations ? { roomInvitations } : {}),
+            canManageInvitations: (session) =>
+              directory.get(session.roomCode)?.canManageInvitations(session.playerId) === true,
+          }),
+        );
+        // ISSUE-372. 홈 화면의 여유 표시. 입장 시도 한도 밖의 읽기 전용 경로다.
+        app.use(
+          createCapacityRoutes({
+            slots,
+            admission,
+            canStartMatch: () => media?.allowsNewMatch?.() ?? true,
+            cleanupReservations,
+          }),
+        );
+        // ISSUE-367. 로그인 게이트는 organization 계정 전체를 통과시키므로 `/demo`·`/showcase` 의
+        // 운영자 판정은 등록 이메일 파일로 한다. 없으면 두 경로는 닫힌다.
+        const operatorAllowed = fileOperatorAllowlist(config.demoAdminEmailsFile);
+        if (config.demoAdminEmailsFile === null && (config.demoRooms || config.showcaseRooms))
+          logger.warn('DEMO_ADMIN_EMAILS_FILE is not set: /demo and /showcase admit no operator');
+        // 발표 시연 방. `/demo` 와 같은 SSO 경계 뒤의 브라우저 진입이며 운영 토큰과 무관하다.
+        app.use(
+          config.showcaseRooms > 0
+            ? createShowcaseRoutes({
+                sessions: productSessions,
+                slots,
+                trustedProxy: product.trustProxy,
+                operatorAllowed,
+                monotonicNow,
+                admissionTtlMs: config.demoAdmissionTtlMs,
+                ready: operationsReady,
+                cleanupReservations,
+              })
+            : createShowcaseUnavailableRoutes(product.trustProxy, operatorAllowed),
+        );
+        if (authorize) {
+          app.use(createInvitationRoutes({ invites, authorize }));
+          // Demo rooms stay closed unless the deployment enabled them (ISSUE-258).
+          app.use(
+            config.demoRooms
+              ? createDemoRoutes({
+                  sessions: productSessions,
+                  slots,
+                  authorize,
+                  monotonicNow,
+                  demoAdmissionTtlMs: config.demoAdmissionTtlMs,
+                  cleanupReservations,
+                })
+              : createDemoUnavailableRoutes(authorize),
+          );
+          // `/demo` is deliberately separate from the Bearer-only operations route. The host
+          // nginx supplies this header only after GitLab SSO, and the game server remains private
+          // behind that proxy. Public player traffic never carries this header.
+          app.use(
+            config.demoRooms
+              ? createDemoAdminRoutes({
+                  sessions: productSessions,
+                  slots,
+                  trustedProxy: product.trustProxy,
+                  operatorAllowed,
+                  monotonicNow,
+                  demoAdmissionTtlMs: config.demoAdmissionTtlMs,
+                  cleanupReservations,
+                })
+              : createDemoAdminUnavailableRoutes(product.trustProxy, operatorAllowed),
+          );
+          if (media?.createOperationsHandlers) {
+            const handlers = media.createOperationsHandlers(authorize);
+            app.post(OPERATIONS_ROUTES.commands, protect(handlers.command));
+            app.get(OPERATIONS_ROUTES.snapshot, protect(handlers.snapshot));
+            app.get(OPERATIONS_ROUTES.status, protect(handlers.status));
+          } else
+            app.use(
+              createOperationsRoutes({
+                operations: () => media?.getOperations() ?? null,
+                authorize,
+              }),
+            );
+        } else {
+          app.use('/api/operations', (_req, res) =>
+            res.status(503).json({ error: 'OPERATOR_AUTH_UNAVAILABLE' }),
+          );
+        }
+        const authenticate = (req: Request, res: Response) => {
+          const auth = productSessions.authenticate(bearer(req));
+          if (!auth) res.status(401).json({ error: 'INVALID_SESSION' });
+          return auth;
+        };
+        app.post(
+          MEDIA_ROUTES.grants,
+          protect(async (req, res) => {
+            res.setHeader('Cache-Control', 'no-store');
+            const auth = authenticate(req, res);
+            if (!auth) return;
+            const parsed = mediaGrantRequestSchema.safeParse(req.body);
+            if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+            const room = directory.get(auth.roomCode);
+            if (!room || room.matchId !== parsed.data.matchId)
+              return void res.status(409).json({ error: 'WRONG_SCOPE' });
+            const scope = room.mediaScopeFor(auth.playerId, parsed.data.purpose);
+            if (!scope) return void res.status(409).json({ error: 'NOT_READY' });
+            if (!media) return void res.status(503).json({ error: 'MEDIA_UNAVAILABLE' });
+            if (!operationsReady()) return void res.status(409).json({ error: 'NOT_READY' });
+            const result = await room.requestMediaGrant(
+              auth.playerId,
+              parsed.data.purpose,
+              parsed.data.previousReceiverGeneration ?? null,
+            );
+            if (!result) return void res.status(409).json({ error: 'WRONG_SCOPE' });
+            if (result.status === 'ready') return void res.status(200).json(result.grant);
+            res.status(result.status === 'unknown' ? 503 : 409).json({ error: result.code });
+          }),
+        );
+        app.post(
+          MEDIA_ROUTES.report,
+          protect((req, res) => {
+            res.setHeader('Cache-Control', 'no-store');
+            const auth = authenticate(req, res);
+            if (!auth) return;
+            const parsed = mediaStatusReportSchema.safeParse(req.body);
+            if (!parsed.success) return void res.status(400).json({ error: 'INVALID_REQUEST' });
+            const room = directory.get(auth.roomCode);
+            if (!room || room.matchId !== parsed.data.matchId)
+              return void res.status(409).json({ error: 'WRONG_SCOPE' });
+            if (!room.acceptMediaReport(auth.playerId, parsed.data))
+              return void res.status(409).json({ error: 'WRONG_SCOPE' });
+            res.status(204).end();
+          }),
+        );
+      }
+      const onError: ErrorRequestHandler = (_error, _req, res, _next) => {
+        res.status(400).json({ error: 'INVALID_REQUEST' });
+      };
+      app.use(onError);
+    },
+  });
+
+  if (!product?.strictProduct) server.define(ROOM_NAME, createGameRoom(sessions));
+  if (product && slots) {
+    const RoomClass = createKkakkungRoom<State>({
+      serverEpoch,
+      monotonicNow,
+      sessions: productSessions,
+      slots,
+      directory,
+      coordinator,
+      roomExpiry,
+      core: product.core,
+      tuning: product.tuning,
+      practice: product.practice,
+      ...(product.demoExits ? { demoExits: product.demoExits } : {}),
+      ...(product.demoStartCells ? { demoStartCells: product.demoStartCells } : {}),
+      ...(product.demoExchangeGain ? { demoExchangeGain: product.demoExchangeGain } : {}),
+      layouts: product.layouts
+        ? {
+            loader: new LayoutLoader({
+              readFile: (path) => readFile(path),
+              maps: product.layouts.maps,
+              selection: product.layouts.selection,
+              now: monotonicNow,
+              ...(product.layouts.budget
+                ? {
+                    budgetMs: product.layouts.budget.onlineMapBudgetMs,
+                    maxAttempts: product.layouts.budget.maxAttempts,
+                    maxBatch: product.layouts.budget.attemptsPerBatch,
+                  }
+                : {}),
+            }),
+            masterPath: product.layouts.masterPath,
+            fallbackPath: product.layouts.fallbackPath,
+            templateId: product.layouts.templateId,
+            templateVersion: product.layouts.templateVersion,
+            // ISSUE-321. 이것이 빠져 방이 고른 크기를 찾지 못하고 늘 기본 맵으로 경기했다.
+            ...(product.layouts.bySize ? { bySize: product.layouts.bySize } : {}),
+          }
+        : null,
+      media,
+      assetVersion: product.assetVersion ?? 'assets-unversioned',
+      emitMetric,
+      emitEvent: eventLogger.emit,
+      canStart: operationsReady,
+      canStartDemo: demoOperationsReady,
+      // ISSUE-364. Near the LiveKit monthly allowance new matches wait in device check.
+      canStartMatch: () => media?.allowsNewMatch?.() ?? true,
+      strictProduct: product.strictProduct,
+      random: product.random,
+      onInvalidateRoom: (roomCode) => {
+        roomInvitations?.revoke(roomCode);
+        invites?.forgetRoom(roomCode);
+      },
+      onKickRoom: (roomCode) => roomInvitations?.revoke(roomCode),
+    });
+    server.define(PRODUCT_ROOM_NAME, RoomClass).filterBy(['roomCode']);
+  } else {
+    class TeamRoom extends DevKkakkungRoom {
+      onAuth(_client: Client, options: unknown) {
+        // Preserve the team's local Playground contract. Production cannot boot this profile.
+        if (
+          options === undefined ||
+          (typeof options === 'object' && options !== null && Object.keys(options).length === 0)
+        )
+          return true;
+        const result = joinOptionsSchema.safeParse(options);
+        if (!result.success) throw new ServerError(400, 'INVALID_JOIN');
+        if (result.data.protocolVersion !== PROTOCOL_VERSION)
+          throw new ServerError(409, 'PROTOCOL_MISMATCH');
+        const session = sessions.consume(result.data.token);
+        if (!session) throw new ServerError(401, 'INVALID_SESSION');
+        return session;
+      }
+    }
+    server.define(PRODUCT_ROOM_NAME, TeamRoom);
+  }
+
+  let tickTimer: NodeJS.Timeout | null = null;
+  let metricsTimer: NodeJS.Timeout | null = null;
+  let reservationTimer: NodeJS.Timeout | null = null;
+  return {
+    server,
+    serverEpoch,
+    directory,
+    slots,
+    coordinator,
+    metrics,
+    alerts,
+    invites,
+    productSessions,
+    get media() {
+      return media;
+    },
+    /** ISSUE-336. Records an exception no room caught; the caller decides to end. */
+    reportProcessFault(kind: 'uncaughtException' | 'unhandledRejection', error: unknown) {
+      const reason = error instanceof Error ? error.message : String(error);
+      eventLogger.emit({
+        event: 'process.fault',
+        level: 'error',
+        atMs: monotonicNow(),
+        fields: { name: kind, reason },
+      });
+      logger.fatal({ err: error, kind }, 'Process fault');
+    },
+    async listen() {
+      try {
+        if (media) {
+          const init = await media.initialize();
+          if (init.status === 'fatal') {
+            throw new Error(`MEDIA_INITIALIZATION_${init.code}`);
+          }
+          logger.info(
+            { readiness: init.readiness.state, admission: init.admission },
+            'Media coordinator initialized',
+          );
+          // ISSUE-364. The monthly guard is off unless the operator configured it. Say so
+          // at every start rather than run silently without it.
+          const monthly = media.monthlyUsage?.() ?? null;
+          if (monthly)
+            logger.info(
+              {
+                usedMinutes: monthly.usedMinutes,
+                remainingMinutes: monthly.remainingMinutes,
+                reserveMinutes: monthly.reserveMinutes,
+                blocked: monthly.blocked,
+              },
+              'LiveKit monthly usage guard active',
+            );
+          else
+            logger.warn(
+              'LiveKit monthly usage guard is OFF: set LIVEKIT_MONTHLY_MINUTES and LIVEKIT_USAGE_BASELINE',
+            );
+        }
+        await server.listen(config.port, config.host);
+      } catch (error) {
+        try {
+          await media?.close();
+        } finally {
+          await product?.closeResources?.();
+        }
+        throw error;
+      }
+      const httpServer = transport.server;
+      if (httpServer)
+        installHttpBoundary(httpServer, {
+          allowedOrigins: config.allowedOrigins,
+          rawBodyPaths: [MEDIA_ROUTES.webhook],
+          allowRequest: (request, path, response) => {
+            if (httpLimiter && !httpLimiter.allow(request, path, response)) return false;
+            if (
+              !entryLimiter ||
+              (!path.startsWith('/api/sessions') && !path.startsWith('/matchmake/'))
+            )
+              return true;
+            return (
+              entryLimiter.attempt(
+                {
+                  inviteId: clientOrigin(request, product?.trustProxy ?? false) ?? 'unknown-peer',
+                  ip: null,
+                },
+                monotonicNow(),
+              ) === 'allowed'
+            );
+          },
+          onRejected: (info) => logger.warn(info, 'HTTP boundary rejected request'),
+        });
+      tickTimer = setInterval(() => coordinator.run(), 10);
+      tickTimer.unref();
+      reservationTimer = setInterval(() => {
+        cleanupReservations();
+        invites?.prune();
+        roomInvitations?.prune();
+      }, 1000);
+      reservationTimer.unref();
+      histogram.enable();
+      let lastJournalWritable: boolean | null = null;
+      metricsTimer = setInterval(() => {
+        sampleProcess();
+        if (httpLimiter) {
+          for (const [name, value] of Object.entries(httpLimiter.totals)) {
+            emitMetric({
+              name: `http.requests.${name}`,
+              value,
+              unit: 'count',
+              atMs: monotonicNow(),
+            });
+          }
+        }
+        // ISSUE-396. The journal alert had no producer. Report only changes: a sample each
+        // second would repeat the same metric log line for nothing.
+        const writable = media?.journalWritable?.() ?? null;
+        if (writable !== null && writable !== lastJournalWritable) {
+          lastJournalWritable = writable;
+          emitMetric({
+            name: 'operations.journal.writable',
+            value: writable ? 1 : 0,
+            unit: 'count',
+            atMs: monotonicNow(),
+          });
+        }
+        for (const sample of metrics.drain()) {
+          alerts.observe(sample);
+          logger.info({ metric: sample }, 'metric');
+        }
+        alerts.observeReadiness(readinessState());
+        notifier?.flush();
+      }, 1000);
+      metricsTimer.unref();
+      ready = true;
+      const address = httpServer?.address();
+      const port = typeof address === 'object' && address ? address.port : config.port;
+      logger.info(
+        { port, stage: product ? 'product-assembly' : 'skeleton', mediaEnabled: media !== null },
+        'Server ready',
+      );
+      return port;
+    },
+    async close() {
+      ready = false;
+      if (tickTimer) clearInterval(tickTimer);
+      tickTimer = null;
+      if (reservationTimer) clearInterval(reservationTimer);
+      reservationTimer = null;
+      if (metricsTimer) clearInterval(metricsTimer);
+      metricsTimer = null;
+      histogram.disable();
+      try {
+        await server.gracefullyShutdown(false);
+      } finally {
+        try {
+          await media?.close();
+        } finally {
+          await product?.closeResources?.();
+        }
+      }
+    },
+  };
+}

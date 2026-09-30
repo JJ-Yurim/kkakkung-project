@@ -1,0 +1,122 @@
+import type { PrivateView, PublicRoundState, Role } from '@kkakkung/protocol/game-schema';
+import { resultPresenter } from './result-presenter';
+import type { RequestDisplay } from '../../room/command-lifecycle';
+import { commandFeedback } from './command-feedback';
+export function ResultScreen({
+  round,
+  self,
+  host,
+  request,
+  connectedCount,
+  demo = false,
+  onRematch,
+  showcase = false,
+  capacity = 6,
+}: {
+  round: PublicRoundState;
+  self: PrivateView['self'];
+  host: boolean;
+  request?: RequestDisplay;
+  connectedCount: number;
+  /**
+   * ISSUE-318. 데모 방은 관리자 한 명과 인형 다섯이라 팀·인원 안내가 맞지 않는다. 대신 다음
+   * 경기에서 관리자가 맡을 역할을 고른다. 술래 쪽 대본을 보려고 링크를 새로 만들 필요가 없다.
+   */
+  demo?: boolean;
+  onRematch(mode: 'same' | 'swap' | 'lobby', role?: Role): void;
+  /**
+   * ISSUE-390. 시연 방. 같은 자리로 다시 하거나 로비로 돌아갈 수 있다. 역할은 /showcase 에서
+   * 고른 자리가 정하므로 역할 바꾸기는 없다.
+   */
+  showcase?: boolean;
+  /** 방의 자리 수. 도망자 수(절반)로 남은 도망자를 세고, 재입장 안내의 분모가 된다. */
+  capacity?: number;
+}) {
+  const result = resultPresenter(round, self, { runners: capacity / 2 });
+  const pending =
+    round.rematchState === 'requested' ||
+    (request !== undefined && ['pending', 'waiting-view', 'applied'].includes(request.status));
+  const ended = ['RESULT', 'ABORTED'].includes(round.phase);
+  return (
+    <section className="result-screen">
+      <h2>{result.title}</h2>
+      {result.personalResult && <p aria-label="나의 결과">{result.personalResult}</p>}
+      {result.teamResult && <p aria-label="우리 팀 결과">{result.teamResult}</p>}
+      <p>{result.message}</p>
+      <p>
+        탈출 {result.counts.escaped} · 포획 {result.counts.captured} ·{' '}
+        {ended ? '종료 시 남은 도망자' : '활동 중인 도망자'} {result.counts.active}
+      </p>
+      {result.remaining !== null && <p>남은 시간 {result.remaining}초</p>}
+      {ended && (
+        <p role="status" className="notice">
+          {pending
+            ? '다음 경기를 준비하고 있습니다. 잠시 기다려 주세요.'
+            : round.rematchState === 'settling'
+              ? '다음 경기를 위해 연결을 정리하고 있습니다. 재경기를 선택하면 준비되는 대로 이동합니다.'
+              : demo
+                ? '다음 경기에서 맡을 역할을 고르거나 로비로 돌아가세요. 인형이 준비를 대신합니다.'
+                : showcase && host
+                  ? '같은 자리로 다시 시작하면 같은 맵·같은 시작 위치·같은 출구로 다시 합니다.'
+                  : host
+                    ? '재경기 방식을 선택해 주세요. 모두 다시 준비한 뒤 시작합니다.'
+                    : '방장이 다음 경기를 선택하기를 기다리고 있습니다.'}
+        </p>
+      )}
+      {ended && !demo && connectedCount < capacity && (
+        <p>
+          현재 {connectedCount}/{capacity}명입니다. 로비에서 추가 참가자를 모은 뒤 시작할 수
+          있습니다.
+          {/* ISSUE-370. 끊긴 사람은 로비에서만 다시 들어올 수 있다. 방장이 할 일을 알려 준다. */}
+          {round.phase === 'ABORTED' &&
+            round.abortReason === 'GAME_CONNECTION_LOST' &&
+            (host
+              ? ' 로비로 돌아가면 연결이 끊긴 참가자가 같은 방 코드로 다시 들어올 수 있습니다.'
+              : ' 방장이 로비로 돌아가면 연결이 끊긴 참가자가 다시 들어올 수 있습니다.')}
+        </p>
+      )}
+      {commandFeedback(request) && <p role="status">{commandFeedback(request)}</p>}
+      {host && ended && demo && (
+        <div className="actions">
+          {(['runner', 'tagger'] as const).map((role) => (
+            <button
+              key={role}
+              disabled={pending}
+              aria-pressed={self?.role === role}
+              onClick={() => onRematch('same', role)}
+            >
+              {role === 'runner' ? '도망자로 재경기' : '술래로 재경기'}
+            </button>
+          ))}
+          {/* ISSUE-396. 일반 방의 로비 복귀 재경기도 데모에서 확인한다. 역할은 관리자 선택을 유지한다. */}
+          <button disabled={pending} onClick={() => onRematch('lobby')}>
+            로비로 돌아가기
+          </button>
+        </div>
+      )}
+      {host && ended && showcase && (
+        <div className="actions">
+          <button disabled={pending} onClick={() => onRematch('same')}>
+            같은 자리로 다시 시작
+          </button>
+          <button disabled={pending} onClick={() => onRematch('lobby')}>
+            로비로 돌아가기
+          </button>
+        </div>
+      )}
+      {host && ended && !showcase && !demo && (
+        <div className="actions">
+          <button disabled={pending} onClick={() => onRematch('same')}>
+            같은 팀으로 재경기
+          </button>
+          <button disabled={pending} onClick={() => onRematch('swap')}>
+            역할 바꿔 재경기
+          </button>
+          <button disabled={pending} onClick={() => onRematch('lobby')}>
+            로비로 돌아가기
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}

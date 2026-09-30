@@ -1,0 +1,34 @@
+{
+  "tuningVersion": "mvp-v4",
+  "match": {
+    "tickMs": 50,
+    "moveTicks": 12,
+    "turnTicks": 8,
+    "grabTicks": 6,
+    "roundTicks": 3600,
+    "installationTicks": 10,
+    "armTicks": 20,
+    "restraintTicks": 60,
+    "restraintImmunityTicks": 40,
+    "exchangeExpiryTicks": 80,
+    "traceDelayTicks": 20,
+    "traceVisibleTicks": 40,
+    "exitMinimumTicks": 40,
+    "exitExpiryTicks": 160,
+    "exitRetryTicks": 10
+  },
+  "layout": {
+    "minRunnerDistance": 18,
+    "minRunnerTaggerDistance": 18,
+    "minExitDistance": 10,
+    "minExitPathLength": 18,
+    "maxExitPathLength": 45,
+    "maxExitRatio": 1.3,
+    "minSpawnNeighbors": 2
+  },
+  "selection": {
+    "maxAttempts": 256,
+    "onlineMapBudgetMs": 100,
+    "attemptsPerBatch": 8
+  }
+}

@@ -1,0 +1,58 @@
+# EC2 운영 override. 단독으로 쓰지 않고 개발용 compose.yaml 위에 덧씌웁니다.
+#
+#   TAG=a1b2c3d4 docker compose -f infra/compose.yaml -f infra/compose.production.yaml up -d
+#
+# compose.yaml 이 서비스 구성·포트(127.0.0.1:8080)·헬스체크·볼륨을 정의하고,
+# 이 파일은 이미지 태그·운영 환경변수·재시작·로그 회전·종료 유예만 바꿉니다.
+# 이미지는 Jenkins 가 커밋 SHA 로 태그해서 미리 빌드해둡니다. 로컬에 그 태그가 있으면
+# compose 는 build 를 다시 하지 않습니다. 롤백은 TAG 를 이전 값으로 바꿔 up -d.
+#
+# 상태 조회·중지는 태그 없이: docker compose -p kkakkung ps / down
+
+name: kkakkung
+
+services:
+  web-proxy:
+    image: kkakkung-web:${TAG:?TAG 를 지정하세요 (예 TAG=a1b2c3d4)}
+    container_name: kkakkung-web
+    restart: unless-stopped
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+
+  game-server:
+    image: kkakkung-game:${TAG:?TAG 를 지정하세요 (예 TAG=a1b2c3d4)}
+    container_name: kkakkung-game
+    restart: unless-stopped
+    # 진행 중인 판을 정리할 시간. SIGTERM 뒤 이 시간 안에 안 끝나면 SIGKILL.
+    stop_grace_period: 30s
+    environment:
+      # server/src/config/env.ts 가 development | test 만 허용합니다 (NFR-05).
+      # production 프로파일은 B 초대 인증·E 운영 통합 뒤(D2) 켭니다. 그때 이 한 줄만 바꿉니다.
+      NODE_ENV: development
+      SERVER_PROFILE: development
+      # 서버가 이 목록에 없는 Origin 은 HTTP 403 / WS 업그레이드 거절합니다. 도메인 바뀌면 여기.
+      ALLOWED_ORIGINS: https://game.example.com
+      SERVICE_NAMESPACE: ${SERVICE_NAMESPACE:-kkakkung-ec2}
+      LOG_LEVEL: info
+      DEMO_ADMIN_EMAILS_FILE: /etc/kkakkung/sso-access/allowed-emails.txt
+    # 비밀값·운영 정책값. Jenkins 가 Secret file 크리덴셜(kkakkung-production-env)을
+    # 배포 직전 이 경로로 내려줍니다 (600, jenkins). 토대는 infra/production.env.example.
+    # 위 environment 가 이 파일보다 우선하므로 비밀 아닌 값은 여기 두지 않습니다.
+    env_file:
+      - /opt/kkakkung/production.env
+    # ISSUE-367. /demo·/showcase 운영자 등록 이메일 목록. 로그인 게이트는 organization 계정 전체를
+    # 통과시키므로 운영자 판정은 서버가 이 파일로 한다. 요청마다 다시 읽어 재시작 없이 반영된다.
+    # 디렉터리나 파일이 없으면 두 관리 경로만 닫히고 게임은 영향이 없다.
+    volumes:
+      - type: bind
+        source: /opt/kkakkung/sso-access
+        target: /etc/kkakkung/sso-access
+        read_only: true
+        # 긴 문법은 호스트 경로가 없으면 기동을 실패시킨다. 목록이 없어도 게임은 떠야 하므로 만든다.
+        bind:
+          create_host_path: true
+    logging:
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }

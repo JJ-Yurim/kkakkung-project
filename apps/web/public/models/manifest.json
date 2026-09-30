@@ -1,0 +1,289 @@
+{
+  "manifestVersion": 1,
+  "generatedAt": "2026-09-08",
+  "note": "Runtime reads only these pinned local assets. Never a latest CDN URL.",
+  "sdk": {
+    "package": "@mediapipe/tasks-vision",
+    "version": "1.0.1",
+    "license": "Apache-2.0",
+    "licenseSource": "apps/web/node_modules/@mediapipe/tasks-vision/package.json license field",
+    "wasmBasePath": "/models/mediapipe/1.0.1/wasm",
+    "files": [
+      {
+        "file": "vision_wasm_internal.js",
+        "sha256": "e170ee67dd4e16c1a6fcd8840a206687e5a59b22c20e4a902bc445b095454d73",
+        "bytes": 323377,
+        "copiedFrom": "apps/web/node_modules/@mediapipe/tasks-vision/wasm",
+        "acquiredAt": "2026-09-08"
+      },
+      {
+        "file": "vision_wasm_internal.wasm",
+        "sha256": "8da277a733926eacd0474b8704b36742d6ec3231c57a860c5b889dff8f1df886",
+        "bytes": 11756954,
+        "copiedFrom": "apps/web/node_modules/@mediapipe/tasks-vision/wasm",
+        "acquiredAt": "2026-09-08"
+      },
+      {
+        "file": "vision_wasm_module_internal.js",
+        "sha256": "da8934057f147b622e82cfb4c0dbd85461c598e268588b5a8ba9ca963a8ff82d",
+        "bytes": 323415,
+        "copiedFrom": "apps/web/node_modules/@mediapipe/tasks-vision/wasm",
+        "acquiredAt": "2026-09-08"
+      },
+      {
+        "file": "vision_wasm_module_internal.wasm",
+        "sha256": "2dabd8e23c60984628beb7bb338764c81a08e6837145273f59578684b5d53c1b",
+        "bytes": 11756972,
+        "copiedFrom": "apps/web/node_modules/@mediapipe/tasks-vision/wasm",
+        "acquiredAt": "2026-09-08"
+      },
+      {
+        "file": "vision_wasm_nosimd_internal.js",
+        "sha256": "e81d715a3d42cc3373602eb2f7aff795d164934db680e32496b65dab537f9658",
+        "bytes": 323180,
+        "copiedFrom": "apps/web/node_modules/@mediapipe/tasks-vision/wasm",
+        "acquiredAt": "2026-09-08"
+      },
+      {
+        "file": "vision_wasm_nosimd_internal.wasm",
+        "sha256": "a28483cd42e74e855bf5ebdb6b40d9b66a5b49e35e95020bc97669e6822a3192",
+        "bytes": 10960242,
+        "copiedFrom": "apps/web/node_modules/@mediapipe/tasks-vision/wasm",
+        "acquiredAt": "2026-09-08"
+      }
+    ],
+    "licenseReviewedAt": "2026-09-13",
+    "bundledNoticesReview": "pending",
+    "licenseNote": "The installed 1.0.1 package declares Apache-2.0 and ships no LICENSE/NOTICE file. The SDK license text is supplied here. Bundled third-party components are now inventoried from the shipped artifacts (sdk.bundledComponents) but their notices are not yet reproduced on the product notice page, so this review stays pending.",
+    "bundledComponents": {
+      "reviewedAt": "2026-09-15",
+      "method": "Components were read out of the shipped artifacts themselves: license headers in vision_bundle.mjs.map sourcesContent, and third_party path strings inside the shipped .wasm. Upstream project docs were not used as the presence evidence.",
+      "binaryCopyrightNotices": 0,
+      "binaryCopyrightNoticesNote": "The three shipped .wasm files contain zero Copyright/License strings. Components whose licenses require reproducing a copyright notice in binary redistribution are therefore not satisfied by the binary alone; the notice must be supplied by the product notice page.",
+      "jsBundle": [
+        {
+          "component": "MediaPipe Tasks Vision (Google LLC)",
+          "license": "Apache-2.0",
+          "licenseVerified": true,
+          "evidence": "license header \"Copyright Google LLC / SPDX-License-Identifier: Apache-2.0\"",
+          "evidenceFile": "vision_bundle.mjs.map sourcesContent"
+        },
+        {
+          "component": "Closure Library",
+          "license": "Apache-2.0",
+          "licenseVerified": true,
+          "evidence": "license header \"Copyright The Closure Library Authors. / SPDX-License-Identifier: Apache-2.0\"",
+          "evidenceFile": "vision_bundle.mjs.map sourcesContent"
+        }
+      ],
+      "wasm": [
+        {
+          "component": "TensorFlow Lite",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "third_party/tensorflow/lite/kernels/conv.cc"
+        },
+        {
+          "component": "OpenCV",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "third_party/OpenCV/public/modules/core/src/matrix.cpp"
+        },
+        {
+          "component": "Abseil",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "third_party/absl/status/statusor.h"
+        },
+        {
+          "component": "XNNPACK",
+          "license": "BSD-3-Clause",
+          "licenseVerified": true,
+          "evidence": "third_party/tensorflow/lite/delegates/xnnpack/file_util.cc",
+          "licenseSourceUrl": "https://raw.githubusercontent.com/google/XNNPACK/master/LICENSE",
+          "note": "Requires reproducing the copyright notice in binary redistribution. Copyright (c) Facebook, Inc. and its affiliates; Copyright 2019 Google LLC."
+        },
+        {
+          "component": "ruy",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "third_party/ruy/ruy/prepare_packed_matrices.cc"
+        },
+        {
+          "component": "Eigen",
+          "license": "MPL-2.0",
+          "licenseVerified": true,
+          "evidence": "N6tflite13eigen_support12_GLOBAL__N_122EigenThreadPoolWrapperE",
+          "licenseSourceUrl": "https://gitlab.com/libeigen/eigen/-/raw/master/COPYING.README",
+          "note": "Primarily MPL-2.0; bundles further Apache-2.0 and BSD-style notices upstream."
+        },
+        {
+          "component": "Protocol Buffers",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "google/protobuf/any.proto"
+        },
+        {
+          "component": "FlatBuffers",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "flatbuffers::BufferHasIdentifier"
+        },
+        {
+          "component": "gemmlowp",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "gemmlowp error: %s"
+        },
+        {
+          "component": "Emscripten libc++abi",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "third_party/emscripten/stable/system/lib/libcxxabi/src/private_typeinfo.cpp"
+        },
+        {
+          "component": "libjpeg",
+          "license": "pending",
+          "licenseVerified": false,
+          "evidence": "JPEG: /usr/lib/x86_64-linux-gnu/libjpeg.so (ver 62)",
+          "note": "Appears only inside an OpenCV build-information string. Whether it is statically linked into the shipped wasm is not established."
+        }
+      ]
+    }
+  },
+  "models": {
+    "face": {
+      "publicPath": "/models/face/face_landmarker.task",
+      "variant": "face_landmarker",
+      "precision": "float16",
+      "release": 1,
+      "sourceUrl": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "bytes": 3758596,
+      "acquiredAt": "2026-09-08",
+      "license": "Apache-2.0",
+      "licenseSource": "https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker#models",
+      "licenseNote": "Official model table links the component model cards listed in licenseEvidence. Those cards state Apache-2.0; this is separate from the SDK license. Supplied model bytes are unchanged.",
+      "licenseEvidence": [
+        {
+          "component": "face_detector.tflite",
+          "sha256": "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f",
+          "bytes": 229746,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/MediaPipe%20BlazeFace%20Model%20Card%20(Short%20Range).pdf"
+        },
+        {
+          "component": "face_landmarks_detector.tflite",
+          "sha256": "c7d54204ce0448474c7f3fa9af494787c0965cbdd6f20fc72867e43046bd43d5",
+          "bytes": 2553590,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Face%20Mesh%20V2.pdf"
+        },
+        {
+          "component": "face_blendshapes.tflite",
+          "sha256": "4f36dded049db18d76048567439b2a7f58f1daabc00d78bfe8f3ad396a2d2082",
+          "bytes": 955312,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf"
+        }
+      ],
+      "licenseReviewedAt": "2026-09-13"
+    },
+    "pose": {
+      "publicPath": "/models/pose/pose_landmarker.task",
+      "variant": "pose_landmarker_lite",
+      "precision": "float16",
+      "release": 1,
+      "sourceUrl": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      "sha256": "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a",
+      "bytes": 5777746,
+      "acquiredAt": "2026-09-08",
+      "license": "Apache-2.0",
+      "licenseSource": "https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker#models",
+      "licenseNote": "Official model table links the component model cards listed in licenseEvidence. Those cards state Apache-2.0; this is separate from the SDK license. Supplied model bytes are unchanged.",
+      "licenseEvidence": [
+        {
+          "component": "pose_detector.tflite",
+          "sha256": "46837eb883e6ec75b52c5f5ff6a9b78bd35e66c13f95e8c3566c582d146cb1d9",
+          "bytes": 2959078,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20BlazePose%20GHUM%203D.pdf"
+        },
+        {
+          "component": "pose_landmarks_detector.tflite",
+          "sha256": "ad6cfd3c903eb31a4ee788b809e45ecf9fa69923b69b9f3f2d9ae616ff433e58",
+          "bytes": 2818390,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20BlazePose%20GHUM%203D.pdf"
+        }
+      ],
+      "licenseReviewedAt": "2026-09-13"
+    },
+    "gesture": {
+      "publicPath": "/models/gesture/gesture_recognizer.task",
+      "variant": "gesture_recognizer",
+      "precision": "float16",
+      "release": 1,
+      "sourceUrl": "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+      "sha256": "97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482",
+      "bytes": 8373440,
+      "acquiredAt": "2026-09-08",
+      "license": "pending",
+      "licenseSource": "https://developers.google.com/edge/mediapipe/solutions/vision/gesture_recognizer#models",
+      "licenseNote": "Hand detection/landmark cards state Apache-2.0. The gesture classification model card (2022) carries no license statement and its PDF is image-only, so no license text can be read from it. Checked on 2026-09-15: the task guide states a license for code samples only (page content is CC-BY-4.0), the MediaPipe repository Apache-2.0 LICENSE does not scope trained model binaries, and the model_maker source header covers the Python file rather than the .tflite it downloads. Redistribution rights for gesture_embedder.tflite and canned_gesture_classifier.tflite remain unconfirmed.",
+      "licenseEvidence": [
+        {
+          "component": "hand_landmarker.task/hand_detector.tflite",
+          "sha256": "60d1bf8d70a80aba35b36290bb2a0e52e784ca2e524937d49ea80e8161a8a384",
+          "bytes": 2339878,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20(Lite_Full)%20with%20Fairness%20Oct%202021.pdf"
+        },
+        {
+          "component": "hand_landmarker.task/hand_landmarks_detector.tflite",
+          "sha256": "6acda74af3fbf40e68265c20c7394b2bad81a16a481dcd79ad7a081887c3d6b9",
+          "bytes": 5478949,
+          "license": "Apache-2.0",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20(Lite_Full)%20with%20Fairness%20Oct%202021.pdf"
+        },
+        {
+          "component": "hand_gesture_recognizer.task/gesture_embedder.tflite",
+          "sha256": "54abe78de1d1cd5e3cdaa0dab01db18e3ec7e09a76e7c3b5fa278572f7a60977",
+          "bytes": 546000,
+          "license": "pending",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/gesture_recognizer/model_card_hand_gesture_classification_with_faireness_2022.pdf"
+        },
+        {
+          "component": "hand_gesture_recognizer.task/canned_gesture_classifier.tflite",
+          "sha256": "62a87ded76da05155f6a59c8babb4c537c138c25138b29450fb030e207a5c0e9",
+          "bytes": 7773,
+          "license": "pending",
+          "sourceUrl": "https://storage.googleapis.com/mediapipe-assets/gesture_recognizer/model_card_hand_gesture_classification_with_faireness_2022.pdf"
+        }
+      ],
+      "licenseReviewedAt": "2026-09-13"
+    }
+  },
+  "notices": {
+    "reviewedAt": "2026-09-27",
+    "files": [
+      {
+        "publicPath": "/licenses/index.html",
+        "sha256": "68ba0b91efe57f11c84e5385c72e4cf2fca322070d7b54153cc8bdf672ede024",
+        "bytes": 4632
+      },
+      {
+        "publicPath": "/licenses/notices.css",
+        "sha256": "b55da49cde85d511f92d0f58f4b2c5dc840a628d7637fa3824dde9056d4ac29e",
+        "bytes": 582
+      },
+      {
+        "publicPath": "/licenses/Apache-2.0.txt",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "bytes": 11358,
+        "license": "Apache-2.0",
+        "sourceUrl": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      }
+    ]
+  }
+}

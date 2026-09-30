@@ -1,0 +1,200 @@
+/** Product session HTTP contract (`POST /api/sessions`) and product room join options. */
+import { z } from 'zod';
+import { PRODUCT_PROTOCOL_VERSION } from '../version.js';
+
+export const SESSION_ROUTE = '/api/sessions';
+/** Request-scoped hint only; POST independently validates identity and invitation scope. */
+export const SESSION_ACCESS_ROUTE = '/api/sessions/access';
+export const sessionAccessResponseSchema = z.strictObject({
+  method: z.enum(['invitation', 'gitlab-sso', 'guest']),
+});
+export type SessionAccessResponse = z.infer<typeof sessionAccessResponseSchema>;
+/** DELETE with the owner's Bearer token; never accepts a playerId or roomCode. */
+export const SESSION_CANCEL_ROUTE = '/api/sessions/current';
+export const sessionCancelRequestSchema = z.strictObject({});
+export const SESSION_CANCEL_ERROR_CODES = [
+  'INVALID_REQUEST',
+  'INVALID_SESSION',
+  'SESSION_IN_USE',
+] as const;
+export type SessionCancelErrorCode = (typeof SESSION_CANCEL_ERROR_CODES)[number];
+/**
+ * ISSUE-372. 지금 방을 만들고 경기를 시작할 여유가 있는지. 홈 화면이 방 만들기 전에 보여 준다.
+ * 개수와 상태만 담고 방 코드·참가자는 담지 않는다. `/api/sessions` 밑에 두지 않는 것은 입장 시도
+ * 한도를 화면 갱신이 갉아먹지 않게 하려는 것이다.
+ */
+export const SERVICE_CAPACITY_ROUTE = '/api/capacity';
+const count = z.number().int().nonnegative();
+export const serviceCapacitySchema = z.strictObject({
+  /** 지금 연습~경기 중인 일반 방 수와 동시에 진행할 수 있는 경기 수. */
+  matchesInUse: count,
+  matchLimit: count,
+  /** 지금 열려 있는 일반 방(대기방 포함) 수와 한도. */
+  lobbyRoomsInUse: count,
+  lobbyRoomLimit: count,
+  /** 새 입장을 받는 중인가. 점검(배포 drain) 중이면 false. */
+  admissionOpen: z.boolean(),
+  /** 월 영상·음성 사용량 한도로 새 경기를 막고 있는가. */
+  mediaBlocked: z.boolean(),
+});
+export type ServiceCapacity = z.infer<typeof serviceCapacitySchema>;
+export const ROOM_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
+
+export const nicknameSchema = z.string().min(1).max(20);
+export const inviteTokenSchema = z.string().min(16).max(512);
+export const roomCodeSchema = z.string().regex(ROOM_CODE_PATTERN);
+
+export const sessionRequestSchema = z.discriminatedUnion('createRoom', [
+  z.strictObject({
+    nickname: nicknameSchema,
+    inviteToken: inviteTokenSchema.optional(),
+    createRoom: z.literal(true),
+  }),
+  z.strictObject({
+    nickname: nicknameSchema,
+    inviteToken: inviteTokenSchema.optional(),
+    createRoom: z.literal(false),
+    roomCode: roomCodeSchema,
+  }),
+]);
+export type SessionRequest = z.infer<typeof sessionRequestSchema>;
+
+export const sessionResponseSchema = z.strictObject({
+  sessionToken: z.string().min(1),
+  playerId: z.string().min(1),
+  roomCode: roomCodeSchema,
+  /** Epoch milliseconds. Not the server monotonic clock. */
+  expiresAt: z.number().int().positive().safe(),
+  protocolVersion: z.literal(PRODUCT_PROTOCOL_VERSION),
+});
+export type SessionResponse = z.infer<typeof sessionResponseSchema>;
+
+/** The connected lobby host manages only their current room. Never shares session credentials. */
+export const ROOM_INVITATION_ROUTE = '/api/sessions/current/invitation';
+export const roomInvitationRequestSchema = z.strictObject({});
+export const roomInvitationResponseSchema = z.strictObject({
+  inviteToken: inviteTokenSchema,
+  roomCode: roomCodeSchema,
+  expiresAt: z.number().int().positive().safe(),
+});
+export type RoomInvitationResponse = z.infer<typeof roomInvitationResponseSchema>;
+export const ROOM_INVITATION_ERROR_CODES = [
+  'INVALID_REQUEST',
+  'INVALID_SESSION',
+  'INVITATION_UNAVAILABLE',
+  'RATE_LIMITED',
+  'ADMISSION_CLOSED',
+] as const;
+export type RoomInvitationErrorCode = (typeof ROOM_INVITATION_ERROR_CODES)[number];
+
+/**
+ * Operator-only demo room (ISSUE-258). The operator token opens a room whose other five
+ * participants are server-driven puppets, so one person can show game situations that normally
+ * need six. There is no player-facing route to it: the response carries the operator's own
+ * session, and the room refuses ordinary admission.
+ */
+export const DEMO_ROOM_ROUTE = '/api/operations/demo-rooms';
+/**
+ * Browser-facing administrator entry. The host edge accepts this route only after GitLab SSO and
+ * replaces the administrator identity header itself; it never accepts an operations Bearer from
+ * a browser. The operations route above remains loopback-only for deployment tooling.
+ */
+export const DEMO_ADMIN_ROOM_ROUTE = '/api/demo-admin/rooms';
+export const demoRoomRequestSchema = z.strictObject({
+  role: z.enum(['runner', 'tagger']),
+  nickname: nicknameSchema.optional(),
+});
+export type DemoRoomRequest = z.infer<typeof demoRoomRequestSchema>;
+export const demoRoomResponseSchema = z.strictObject({
+  sessionToken: z.string().min(1),
+  playerId: z.string().min(1),
+  roomCode: roomCodeSchema,
+  role: z.enum(['runner', 'tagger']),
+  expiresAt: z.number().int().positive().safe(),
+  protocolVersion: z.literal(PRODUCT_PROTOCOL_VERSION),
+  /** Ready-made address fragment for the operator: the page consumes and clears it on open. */
+  entryFragment: z.string().min(1).max(1024),
+});
+export type DemoRoomResponse = z.infer<typeof demoRoomResponseSchema>;
+
+/**
+ * 발표 시연 방(showcase). 실제 사람 넷이 2:2 로 고정 소형 미로에서 3분을 온전히 뛰는 경기다.
+ * `/showcase` 를 연 팀원이 모두 같은 방에 모이고, 자리는 각자 고른다. 진입은 `/demo` 와 같은
+ * GitLab SSO 경계 뒤에 있고 브라우저에 운영 토큰은 전달되지 않는다.
+ *
+ * ISSUE-403. 발표 대본은 자리(도망자 1·2, 술래 1·2)별로 쓰이고 자리마다 시작 칸·출구가
+ * 고정이다(390). 역할만 고르면 자리 번호가 같은 역할을 고른 순서로 정해져 제출 순서에 따라
+ * 대본과 자리가 엇갈렸다. 그래서 자리를 직접 고르고, 표시 이름은 자리 이름으로 정해진다.
+ */
+export const SHOWCASE_ROOM_ROUTE = '/api/showcase/rooms';
+export const SHOWCASE_SEATS = ['runner-1', 'runner-2', 'tagger-1', 'tagger-2'] as const;
+export type ShowcaseSeat = (typeof SHOWCASE_SEATS)[number];
+export const showcaseSeatRole = (seat: ShowcaseSeat): 'runner' | 'tagger' =>
+  seat.startsWith('runner') ? 'runner' : 'tagger';
+/** 자리의 표시 이름. 시연 방 명부·시점 캡션이 이 이름을 그대로 보인다. */
+export const SHOWCASE_SEAT_LABELS: Readonly<Record<ShowcaseSeat, string>> = {
+  'runner-1': '도망자 1',
+  'runner-2': '도망자 2',
+  'tagger-1': '술래 1',
+  'tagger-2': '술래 2',
+};
+export const showcaseRoomRequestSchema = z.strictObject({
+  seat: z.enum(SHOWCASE_SEATS),
+});
+export type ShowcaseRoomRequest = z.infer<typeof showcaseRoomRequestSchema>;
+export const showcaseRoomResponseSchema = z.strictObject({
+  sessionToken: z.string().min(1),
+  playerId: z.string().min(1),
+  roomCode: roomCodeSchema,
+  role: z.enum(['runner', 'tagger']),
+  expiresAt: z.number().int().positive().safe(),
+  protocolVersion: z.literal(PRODUCT_PROTOCOL_VERSION),
+  /** 페이지가 열리며 소비·삭제하는 주소 조각. `#showcase=<token>&room=<code>&player=<id>`. */
+  entryFragment: z.string().min(1).max(1024),
+});
+export type ShowcaseRoomResponse = z.infer<typeof showcaseRoomResponseSchema>;
+/** 시연 방 발급 오류. SEAT_TAKEN 은 고른 자리에 이미 누가 앉았다는 뜻이라 다른 자리를 고른다. */
+export const SHOWCASE_ERROR_CODES = [
+  'INVALID_REQUEST',
+  'UNAUTHORIZED',
+  'SEAT_TAKEN',
+  'CAPACITY',
+  'SHOWCASE_UNAVAILABLE',
+  // ISSUE-362. 서버가 입장을 받지 않는 동안(readiness LOCKED, admission 닫힘). 일반 세션 발급과 같다.
+  'ADMISSION_CLOSED',
+] as const;
+export type ShowcaseErrorCode = (typeof SHOWCASE_ERROR_CODES)[number];
+
+/** Safe HTTP error codes for the session route. No hidden room content is ever returned. */
+export const SESSION_ERROR_CODES = [
+  'INVALID_REQUEST',
+  'INVALID_INVITATION',
+  'ROOM_NOT_AVAILABLE',
+  'RATE_LIMITED',
+  'ADMISSION_CLOSED',
+  /** 서비스가 찼다: 열 수 있는 방 수(`MAX_ROOMS`)나 좌석 수(`MAX_SLOTS`)를 다 썼다. 잠시 뒤 다시. */
+  'CAPACITY',
+  /**
+   * ISSUE-365. 들어가려던 그 방의 자리가 찼다. 서비스는 여유가 있을 수 있어 `CAPACITY` 와
+   * 다르게 답한다: 여기서는 기다리는 것이 아니라 다른 방을 찾거나 새 방을 만든다.
+   */
+  'ROOM_FULL',
+  /**
+   * 이 호출자가 이미 상한만큼 방을 열어 두었다(ISSUE-293). 서비스가 찬 `CAPACITY` 와는
+   * 다른 사실이라 따로 답한다: 여기서는 자기 방을 닫으면 바로 다시 열 수 있다.
+   */
+  'TOO_MANY_ROOMS',
+  /**
+   * ISSUE-366. 이 계정이 이미 다른 창·탭에서 방에 접속해 있다. 한 계정은 서비스 전체에서
+   * 자리 하나만 갖는다. 그 창을 닫으면 자리가 바로 풀린다.
+   */
+  'ALREADY_IN_ROOM',
+] as const;
+export type SessionErrorCode = (typeof SESSION_ERROR_CODES)[number];
+
+export const productJoinOptionsSchema = z.strictObject({
+  token: z.string().min(1),
+  roomCode: roomCodeSchema,
+  protocolVersion: z.string(),
+});
+export type ProductJoinOptions = z.infer<typeof productJoinOptionsSchema>;
