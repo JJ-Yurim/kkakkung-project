@@ -9,7 +9,7 @@ name: kkakkung-sso
 
 services:
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.8.1
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6
     container_name: kkakkung-sso
     restart: unless-stopped
     ports:

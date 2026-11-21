@@ -325,6 +325,12 @@ describe('pipeline carries no stage that cannot change its verdict', () => {
     expect(imageScanJenkinsfile).toMatch(/triggers \{ cron\(/);
     // 배포된 것만 본다. 아무도 쓰지 않는 MR 이미지를 스캔하던 것이 문제였다.
     expect(imageScanJenkinsfile).toContain('last-good-tag');
+    expect(imageScanJenkinsfile).toContain(
+      "docker container inspect --format '{{.Image}}' kkakkung-sso",
+    );
+    expect(imageScanJenkinsfile).toContain(
+      'for img in "$IMG_GAME:$tag" "$IMG_WEB:$tag" "$sso_image"',
+    );
   });
   it('pins every scanner tag so a build never silently changes what it ran', () => {
     for (const source of [jenkinsfile, imageScanJenkinsfile])

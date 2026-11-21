@@ -40,7 +40,7 @@ GitLab에서 소스를 클론한 뒤 까꿍을 빌드하고 배포하는 절차�
 | 웹 서버(호스트)    | nginx. TLS 종단, SSO, 경로 차단           | 호스트 패키지                               |
 | 웹 서버(컨테이너)  | nginx. 정적 파일, `/api`·WebSocket 프록시 | `nginx:1.28-alpine`                         |
 | 게임 서버 컨테이너 | Node.js                                   | `node:24.19.0-bookworm-slim`                |
-| 로그인 게이트      | oauth2-proxy(GitLab OAuth)                | `quay.io/oauth2-proxy/oauth2-proxy:v7.8.1`  |
+| 로그인 게이트      | oauth2-proxy(GitLab OAuth)                | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.6`  |
 | CI/CD              | Jenkins(OpenJDK 21 JRE 위에서 동작)       | `pkg.jenkins.io` stable 패키지              |
 | CI 검증 컨테이너   | Node.js + Playwright Chromium             | `node:24.19.0-bookworm`, Playwright 1.63.0  |
 | 비밀 스캔          | gitleaks                                  | `zricethezav/gitleaks:v8.30.1`              |

@@ -189,7 +189,7 @@ MR 계획의 조건은 경로 규칙이다. 경로가 `/`나 `-`로 끝나면 �
 
 | 잡 파일                     | cron           | timeout | 로그 보관 | 도구·자격증명                                                                                                         | 동작                                                                                                                                                                                                |
 | --------------------------- | -------------- | ------- | --------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `image-scan.Jenkinsfile`    | `H 5 * * *`    | 30분    | 30        | `aquasec/trivy:0.74.0`, 캐시 볼륨 `trivy-cache`, docker.sock 마운트                                                   | `last-good-tag`의 `kkakkung-game`·`kkakkung-web` 이미지를 `--severity HIGH,CRITICAL --no-progress --exit-code 0`로 스캔. 태그 파일이 없거나 이미지가 없으면 종료 1. 취약점은 잡을 실패시키지 않는다 |
+| `image-scan.Jenkinsfile`    | `H 5 * * *`    | 30분    | 30        | `aquasec/trivy:0.74.0`, 캐시 볼륨 `trivy-cache`, docker.sock 마운트                                                   | `last-good-tag`의 `kkakkung-game`·`kkakkung-web`과 `kkakkung-sso` 컨테이너의 이미지 ID를 `--severity HIGH,CRITICAL --no-progress --exit-code 0`로 스캔. 태그 파일이 없거나 이미지가 없으면 종료 1. 취약점은 잡을 실패시키지 않는다 |
 | `livekit-usage.Jenkinsfile` | `H/30 * * * *` | 5분     | 50        | `livekit-api-key`, `livekit-api-secret`, `livekit-project-id`, `livekit-usage-baseline-minutes`, `mattermost-webhook` | `check-livekit-usage.mjs --state "$STATE_DIR/livekit-usage-state.json"`. `SEND_TEST` 매개변수(기본 false)면 `--test`                                                                                |
 | `watchdog.Jenkinsfile`      | `H/5 * * * *`  | 3분     | 50        | `mattermost-webhook`                                                                                                  | `watch-service.mjs --state "$STATE_DIR/watchdog-state.json"`. `SEND_TEST`면 `--test`                                                                                                                |
 
@@ -456,7 +456,7 @@ compose의 `environment`가 `env_file`보다 우선하므로, 제품 오버레�
 
 ### 10.3 SSO 프록시
 
-앱 배포와 별도인 compose 프로젝트 `kkakkung-sso`다. 이미지 `quay.io/oauth2-proxy/oauth2-proxy:v7.8.1`, 컨테이너 `kkakkung-sso`, `restart: unless-stopped`, 포트 `127.0.0.1:4180:4180`, `env_file: /opt/kkakkung/sso.env`(클라이언트 ID·시크릿·쿠키 시크릿), json-file `5m`×2다.
+앱 배포와 별도인 compose 프로젝트 `kkakkung-sso`다. 이미지 `quay.io/oauth2-proxy/oauth2-proxy:v7.15.6`, 컨테이너 `kkakkung-sso`, `restart: unless-stopped`, 포트 `127.0.0.1:4180:4180`, `env_file: /opt/kkakkung/sso.env`(클라이언트 ID·시크릿·쿠키 시크릿), json-file `5m`×2다.
 
 | 환경                                             | 값                                                                                     |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------- |

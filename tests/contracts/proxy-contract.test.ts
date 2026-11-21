@@ -33,7 +33,7 @@ describe('host nginx (TLS edge)', () => {
   it('terminates TLS with the certbot chain on 443 http2', () => {
     expect(host).toMatch(/listen 443 ssl http2;/);
     expect(host).toMatch(
-      /ssl_certificate\s+\/etc\/letsencrypt\/live\/game-host\.p\.organization\.io\/fullchain\.pem/,
+      /ssl_certificate\s+\/etc\/letsencrypt\/live\/game\.example\.com\/fullchain\.pem;/,
     );
     expect(host).toMatch(/include \/etc\/letsencrypt\/options-ssl-nginx\.conf/);
   });
