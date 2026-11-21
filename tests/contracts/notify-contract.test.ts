@@ -38,7 +38,9 @@ describe('notify-map.json', () => {
     // GitLab usernames seen in webhook records must resolve even when the account email differs.
     expect(map.byGitlabUsername.jhsfw0506).toBe('jhsfw0506');
     expect(map.byGitlabUsername.a4651001).toBe('ljh12160569');
-    expect(map.mergeRequestBaseUrl).toMatch(/^https:\/\/lab\.organization\.com\/.+\/merge_requests\/$/);
+    expect(map.mergeRequestBaseUrl).toMatch(
+      /^https:\/\/lab\.organization\.com\/.+\/merge_requests\/$/,
+    );
   });
 
   it('holds no webhook URL or token', () => {

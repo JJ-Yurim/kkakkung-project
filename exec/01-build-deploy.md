@@ -40,12 +40,12 @@ GitLab에서 소스를 클론한 뒤 까꿍을 빌드하고 배포하는 절차�
 | 웹 서버(호스트)    | nginx. TLS 종단, SSO, 경로 차단           | 호스트 패키지                               |
 | 웹 서버(컨테이너)  | nginx. 정적 파일, `/api`·WebSocket 프록시 | `nginx:1.28-alpine`                         |
 | 게임 서버 컨테이너 | Node.js                                   | `node:24.19.0-bookworm-slim`                |
-| 로그인 게이트      | oauth2-proxy(GitLab OAuth)                | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.6`  |
+| 로그인 게이트      | oauth2-proxy(GitLab OAuth)                | `quay.io/oauth2-proxy/oauth2-proxy:v7.15.6` |
 | CI/CD              | Jenkins(OpenJDK 21 JRE 위에서 동작)       | `pkg.jenkins.io` stable 패키지              |
 | CI 검증 컨테이너   | Node.js + Playwright Chromium             | `node:24.19.0-bookworm`, Playwright 1.63.0  |
 | 비밀 스캔          | gitleaks                                  | `zricethezav/gitleaks:v8.30.1`              |
 | 이미지 스캔(야간)  | Trivy                                     | `aquasec/trivy:0.74.0`                      |
-| 인증서             | Let's Encrypt(certbot)                    | `/etc/letsencrypt/live/game.example.com/` |
+| 인증서             | Let's Encrypt(certbot)                    | `/etc/letsencrypt/live/game.example.com/`   |
 
 Jenkins 자체만 JVM(OpenJDK 21)을 쓴다. 서비스 코드는 JVM과 무관하다.
 
@@ -101,7 +101,7 @@ docker compose -f infra/compose.yaml up -d --build
 | `NODE_ENV`                | `development`                      | `development`·`test`만 허용한다. `production`은 부팅을 거절한다 |
 | `SERVER_PROFILE`          | `product`                          | 제품 게임 조립. `development`는 진단 프로필                     |
 | `HOST` / `PORT`           | `0.0.0.0` / `2567`                 | 컨테이너 안 주소. 호스트 포트는 열지 않는다                     |
-| `ALLOWED_ORIGINS`         | `https://game.example.com`       | 목록 밖 Origin은 HTTP 403·WebSocket 거절                        |
+| `ALLOWED_ORIGINS`         | `https://game.example.com`         | 목록 밖 Origin은 HTTP 403·WebSocket 거절                        |
 | `TRUST_PROXY_HOPS`        | `1`                                | 호스트 nginx 한 단계를 믿는다(SSO 헤더)                         |
 | `SERVICE_NAMESPACE`       | `kkakkung-ec2`                     | LiveKit 방 이름 접두사                                          |
 | `LOG_LEVEL`               | `info`                             |                                                                 |
