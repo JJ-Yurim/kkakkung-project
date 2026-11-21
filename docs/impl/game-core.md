@@ -101,8 +101,8 @@
 | `match.grabTicks`                                               |             6 | 정수 1~20틱                                             |
 | `match.roundTicks`                                              |          3600 | 정확히 3600틱(180초)                                    |
 | `match.installationTicks` / `armTicks`                          |       10 / 20 | 고정. 0.5초 설치, 설치 끝 1초 뒤 무장                   |
-| `match.restraintTicks` / `restraintImmunityTicks`               |       60 / 40 | 고정. 3초 구속, 2초 면역(ISSUE-386)                |
-| `match.exchangeExpiryTicks`                                     |            80 | 고정. 4초(ISSUE-389에서 40→80)                     |
+| `match.restraintTicks` / `restraintImmunityTicks`               |       60 / 40 | 고정. 3초 구속, 2초 면역(ISSUE-386)                     |
+| `match.exchangeExpiryTicks`                                     |            80 | 고정. 4초(ISSUE-389에서 40→80)                          |
 | `match.traceDelayTicks` / `traceVisibleTicks`                   |       20 / 40 | 고정. 1초 지연, 2초 노출                                |
 | `match.exitMinimumTicks` / `exitExpiryTicks` / `exitRetryTicks` | 40 / 160 / 10 | 고정. 2초 최소, 8초 만료, 0.5초 재시도 제한             |
 | `layout.minRunnerDistance`                                      |            18 | 양의 유한수. 도망자 시작 간 경로 이동 수 하한           |

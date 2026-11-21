@@ -4,14 +4,14 @@
 
 ## 2.1 요약
 
-| 서비스                | 용도                                  | 필요한 것                                     | 비밀 값 위치                              |
-| --------------------- | ------------------------------------- | --------------------------------------------- | ----------------------------------------- |
-| LiveKit Cloud         | 얼굴 영상·음성 중계(WebRTC SFU)       | 프로젝트, API Key·Secret, 서버 URL, 웹훅 등록 | `/opt/kkakkung/production.env`            |
+| 서비스                     | 용도                                  | 필요한 것                                     | 비밀 값 위치                              |
+| -------------------------- | ------------------------------------- | --------------------------------------------- | ----------------------------------------- |
+| LiveKit Cloud              | 얼굴 영상·음성 중계(WebRTC SFU)       | 프로젝트, API Key·Secret, 서버 URL, 웹훅 등록 | `/opt/kkakkung/production.env`            |
 | GitLab(gitlab.example.com) | 소셜 로그인(OAuth), 저장소, CI 트리거 | OAuth 앱, 프로젝트 액세스 토큰, 프로젝트 웹훅 | `/opt/kkakkung/sso.env`, Jenkins 크리덴셜 |
-| Mattermost     | 빌드 실패·서비스 장애·사용량 알림     | 수신 웹훅 URL                                 | Jenkins 크리덴셜, `production.env`(선택)  |
-| Let's Encrypt         | HTTPS 인증서                          | 도메인 `game.example.com`, certbot          | 호스트 `/etc/letsencrypt`                 |
-| AWS EC2               | 서버 호스트 1대                       | 클라우드 인스턴스, 도메인                   | 호스트 접속 키(교육 제공)                 |
-| 컨테이너 레지스트리   | 기반 이미지 받기                      | 계정 불필요(공개 이미지)                      | 없음                                      |
+| Mattermost                 | 빌드 실패·서비스 장애·사용량 알림     | 수신 웹훅 URL                                 | Jenkins 크리덴셜, `production.env`(선택)  |
+| Let's Encrypt              | HTTPS 인증서                          | 도메인 `game.example.com`, certbot            | 호스트 `/etc/letsencrypt`                 |
+| AWS EC2                    | 서버 호스트 1대                       | 클라우드 인스턴스, 도메인                     | 호스트 접속 키(교육 제공)                 |
+| 컨테이너 레지스트리        | 기반 이미지 받기                      | 계정 불필요(공개 이미지)                      | 없음                                      |
 
 소셜 로그인은 GitLab 하나뿐이다. 사진 저장 클라우드, 외부 코드 컴파일, 결제, 지도 API는 쓰지 않는다. 얼굴 인식 모델(MediaPipe)은 외부 서비스가 아니라 저장소에 포함된 파일을 브라우저 안에서 돌린다(2.7).
 
@@ -63,12 +63,12 @@
 
 ### 저장소와 CI
 
-| 설정                 | 값                                                                                                                                             |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| 프로젝트 액세스 토큰 | 개인 계정이 아닌 프로젝트 토큰. Jenkins 크리덴셜 `gitlab-token`(Username with password)                                                        |
+| 설정                 | 값                                                                                                                                           |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 프로젝트 액세스 토큰 | 개인 계정이 아닌 프로젝트 토큰. Jenkins 크리덴셜 `gitlab-token`(Username with password)                                                      |
 | 웹훅(MR 검증)        | Settings → Webhooks, URL `https://game.example.com/jenkins/project/kkakkung-mr`, Merge request events만, Secret token은 Jenkins 잡과 같은 값 |
-| 웹훅(develop 배포)   | Push events(develop). 웹훅이 끊겨도 Jenkins가 15분마다 폴링한다                                                                                |
-| 기본 브랜치          | `develop`(병합 대상이자 배포 입력)                                                                                                             |
+| 웹훅(develop 배포)   | Push events(develop). 웹훅이 끊겨도 Jenkins가 15분마다 폴링한다                                                                              |
+| 기본 브랜치          | `develop`(병합 대상이자 배포 입력)                                                                                                           |
 
 ## 2.4 Mattermost
 

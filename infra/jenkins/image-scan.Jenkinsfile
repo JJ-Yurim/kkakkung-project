@@ -42,7 +42,9 @@ pipeline {
             exit 1
           fi
           echo "스캔 대상 태그: $tag"
-          for img in "$IMG_GAME:$tag" "$IMG_WEB:$tag"; do
+          # SSO는 앱과 별도로 배포하므로 컨테이너가 실제로 사용하는 이미지 ID를 검사한다.
+          sso_image=$(docker container inspect --format '{{.Image}}' kkakkung-sso)
+          for img in "$IMG_GAME:$tag" "$IMG_WEB:$tag" "$sso_image"; do
             if ! docker image inspect "$img" > /dev/null 2>&1; then
               echo "이미지가 없습니다: $img (정리됐거나 아직 빌드되지 않음)"
               exit 1
